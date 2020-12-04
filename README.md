@@ -123,14 +123,23 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### 第四步:修改配置文件
 	选择要训练的类型
+	
 	ORDINARY 默认模式(解决不定长，显存小，快速理解)
+	
 	NUM_CLASSES 图片分类(解决例如12306，九宫格)
+	
 	CTC识别文字，不需要设置长度(解决不定长，显存占用非常大，大概需要16G)
+	
 	CTC_TINY识别文字，需要设置长度(解决不定长，显存占用比较大，大概需要6G)
+	
 	EFFICIENTDET目标检测 (解决点选，显存占用比较大，最少需要6G)
+	
 	运行cheak_file.py查看自己的数据最大高和宽
+	
 	IMAGE_HEIGHT和IMAGE_WIDTH最好设置的比数据集的高宽要大
+	
 	本项目对小于配置文件高宽图片的处理是填充
+	
 	大于配置文件高宽的图片先进行等比缩小然后再填充
 
 ### 第五步:打包数据
@@ -176,8 +185,8 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
     'ORDINARY'      默认模式
     'NUM_CLASSES'   图片分类
     'CTC'           文字识别
-	'CTC_TINY'		文字识别
-	'EFFICIENTDET'	目标检测
+    'CTC_TINY'	    文字识别
+    'EFFICIENTDET'     目标检测
     
 
 ### 是否使用数据增强(数据集多的时候不需要用)
