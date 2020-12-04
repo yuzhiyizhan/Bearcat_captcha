@@ -1,0 +1,16 @@
+requests
+gradio
+loguru
+tqdm
+matplotlib
+tensorboard
+xlrd
+pandas
+captcha
+pydot-ng
+graphviz
+plot_model
+opencv-python
+tensorflow_addons
+adabelief_tf
+einops
