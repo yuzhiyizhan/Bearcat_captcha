@@ -53,15 +53,6 @@ pip install tensorflow==2.2 -i https://pypi.douban.com
 
 pip install -r requirements.txt -i https://pypi.douban.com/simple
 	
-	tennsorflow2.1
-    1.安装CUDA 11版本 (官网)[https://developer.nvidia.com/cuda-toolkit]
-    2.由于CUDA会自动配好环境本项目不在详述 在命令行输入 nvcc -V 查看CUDA版本
-    3.安装conda (推荐在清华镜像站下载Anaconda或者Miniconda都可以)
-    4.更新一下conda (conda update -n base conda)
-    5.创建python3.7.7的虚拟环境并进入 (conda create -n example python=3.7.7) (conda activate example)
-    6.安装tensorflow2.1 (conda install tensorflow-gpu)
-    7.再安装其他依赖 (pip install -r requirements.txt -i https://pypi.douban.com/simple)
-
     tensorflow2.2
     1.安装CUDA 11版本 (官网)[https://developer.nvidia.com/cuda-toolkit]
     2.由于CUDA会自动配好环境本项目不在详述 在命令行输入 nvcc -V 查看CUDA版本
