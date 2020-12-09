@@ -47,7 +47,7 @@ git clone https://github.com/yuzhiyizhan/Bearcat_captcha
 
 CPU的直接命令行 
 
-pip install tensorflow==2.2 -i https://pypi.douban.com
+pip install tensorflow==2.2 -i https://pypi.douban.com/simple
 
 然后
 
