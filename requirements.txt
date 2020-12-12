@@ -10,5 +10,6 @@ captcha
 pydot-ng
 graphviz
 opencv-python
+tensorflow_addons
 adabelief_tf
 einops
