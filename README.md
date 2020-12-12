@@ -27,9 +27,13 @@ GPU:NVDIA GeForce GTX 1060
 
 IDE:pycharm
 
+内存:16G
+
 使用cpu训练和gpu训练使用的网络结构不一样，后面会提到
 
 项目不会提供任何模型，所有模型需自行训练(只提供渔，不提供鱼)
+
+除了验证码外，其他任务思路是一样的(例如猫狗大战等)
 
 # 1.项目环境安装与启动
 ## 1.1 环境安装
@@ -37,17 +41,19 @@ tennsorflow2.1无法使用CTC
 
 本项目在tensorflow2.2或2.3下面都可以运行(2.4未发布)
 
-但是两种的安装方法都有区别下面详细说一下(windowns环境):
+两种版本的安装方法有少许区别下面详细说一下(windowns环境):
 
 拉取项目
 
 git clone https://gitclone.com/github.com/yuzhiyizhan/Bearcat_captcha
 
+或
+
 git clone https://github.com/yuzhiyizhan/Bearcat_captcha
 
 CPU的直接命令行 
 
-pip install tensorflow==2.2 -i https://pypi.douban.com/simple
+pip install tensorflow -i https://pypi.douban.com/simple
 
 然后
 
@@ -80,12 +86,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### 以下说明的是中英数识别，图片分类(例如九宫格)
 
 ### 运行项目
-    ps:不想自己练的拉取分支
-    直接运行app.py
-    默认开启5006端口,post请求接受一个参数img
-    需要base64一下,具体请看spider_example.py
-	十分不建议，因为我也不知道自己写了啥
-    
+
 ### 第一步:新建项目
 
     运行New_work.py(两个参数第一个是项目路径，第二个是项目名字)
@@ -117,7 +118,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	
 	ORDINARY 默认模式(解决不定长，显存小，快速理解)
 	
-	NUM_CLASSES 图片分类(解决例如12306，九宫格)
+	NUM_CLASSES 图片分类(解决例如12306，九宫格，猫狗大战)
 	
 	CTC识别文字，不需要设置长度(解决不定长，显存占用非常大，大概需要16G)
 	
@@ -136,13 +137,17 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### 第五步:打包数据
 
 	注意:目标检测使用数据生成器这一步跳过
-    运行pack_dataset.py
+    
+	运行pack_dataset.py
 
 
 ### 第六步:编写模型并编译(model)
 
     暂时先使用项目自带的模型吧
-
+	
+	注意:如果显存不足或者效果不好
+	
+	请灵活选择或自行搭建模型
 
 ### 第七步:开始训练
 
@@ -156,32 +161,42 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### 第九步:评估模型
 
     丹药出来后要看一下是几品丹药
-    运行test.py
+    
+	运行test.py
 
 ### 第十步:开启后端
 
     运行app.py
-    python app.py
+    
+	python app.py
     
 ### 第十一步:调用接口
 
     先运行本项目给的例子感受一下
+	
     注意：这是微博的验证码(普通英数类型)
+	
     python spider_example.py
 
 ## 下面开始补充刚刚省略的一些地方,由于设置文件备注比较完善，解释部分参数
 
 ### MODE
     目前一共五种
+	
     'ORDINARY'      默认模式
+	
     'NUM_CLASSES'   图片分类
+	
     'CTC'           文字识别
+	
     'CTC_TINY'	    文字识别
-    'EFFICIENTDET'     目标检测
+	
+    'EFFICIENTDET'  目标检测
     
 
 ### 是否使用数据增强(数据集多的时候不需要用)
     DATA_ENHANCEMENT = False
+	
 数据集不够或者过拟合时，可以考虑数据增强下
 
 增强方法在Function_API.py里面的Image_Processing.preprosess_save_images
@@ -327,8 +342,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
     
 ### spider_example.py
     爬虫调用例子
-    返回return_code状态码
-    return_info 处理状态
+    返回
     result 识别结果
     recognition_rate 每个字符的识别率
 	time 识别时间单位s
@@ -344,8 +358,8 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	把数据集放到	train_dataset
 	把标签放到		label
 	[标签格式](https://github.com/yuzhiyizhan/generate_click_captcha)
-	运行 move_path区分数据集(可省略)
-	运行 train.py开始训练
+	运行 move_path.py 区分数据集(可省略)
+	运行 train.py 开始训练
 	
 ### 标签与本项目描述的不符
 	修改utils.py
@@ -395,7 +409,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	例如:
 	def captcha_model():
 		inputs = tf.keras.layers.Input(shape=inputs_shape)
-		x = Mobilenet.MobileNetV3Small(inputs)
+		x = Mobilenet.MobileNetV3Small(inputs) ###替换了这里
 		outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
 										activation=tf.keras.activations.softmax)(x)
 		outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
@@ -408,7 +422,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 	注意:模型经过少许魔改可能和大佬原来的网络结构有所不同
 	
-### 保存训练到一定进度的模型
+### 保存训练到一定进度的模型(最少一轮)
 	很多时候模型训练的差不多了
 	
 	这时直接停止运行save_model.py
@@ -552,6 +566,8 @@ CTC的标签比较简单，比如1表示龙，2表示舟
 
 那么可以把图片分割成9份，分开来识别，当然现在只是想想肯定有更好的思路
 
+(已确定思路正确)
+
 特别感谢下面一些项目对我的启发
 
 [crnn_by_tensorflow2.2.0](https://github.com/lvjianjin/crnn_by_tensorflow2.2.0)
@@ -571,6 +587,10 @@ CTC的标签比较简单，比如1表示龙，2表示舟
 [captcha_break](https://github.com/ypwhs/captcha_break)
 
 [tf_ResNeSt_RegNet_model](https://github.com/QiaoranC/tf_ResNeSt_RegNet_model)
+
+[ghostnet_tf2](https://github.com/CarloLepelaars/ghostnet_tf2)
+
+[dynamic-relu-tf](https://github.com/jyhengcoder/dynamic-relu-tf)
 
 特别说明一下由于大佬的代码不装pytorch是装不上的
 
@@ -712,6 +732,11 @@ qq2387301977
 	
 	待更新目标检测轻量模型，测试MAP
 	
+## 2020/12/12
+
+	删除旧分支，不再提供任何模型
+	
+	待更新目标检测轻量模型，测试MAP
 	
     
 # 遇到的错误和解决方法

@@ -398,6 +398,7 @@ from {work_path}.{project_name}.settings import PHI
 from {work_path}.{project_name}.settings import MODE
 from {work_path}.{project_name}.settings import MODEL
 from {work_path}.{project_name}.settings import DIVIDE
+from {work_path}.{project_name}.settings import PRUNING
 from {work_path}.{project_name}.settings import MAX_BOXES
 from {work_path}.{project_name}.settings import test_path
 from {work_path}.{project_name}.settings import label_path
@@ -2041,8 +2042,12 @@ class Predict_Image(object):
             self.anchors = YOLO_anchors.get_anchors()
 
     def load_model(self):
-        self.model = operator.methodcaller(MODEL)(Models)
-        self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
+        if PRUNING:
+            self.model = tf.lite.Interpreter(model_path=self.model_path)
+            self.model.allocate_tensors()
+        else:
+            self.model = operator.methodcaller(MODEL)(Models)
+            self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
         with open(n_class_file, 'r', encoding='utf-8') as f:
             result = f.read()
         self.num_classes_dict = json.loads(result)
@@ -2146,7 +2151,7 @@ class Predict_Image(object):
             else:
                 new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
             new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-            image = np.array(new_image)
+            image = np.array(new_image, dtype=np.float32)
             image = np.expand_dims(image, axis=0)
             image = image / 255.
             return image
@@ -2166,7 +2171,7 @@ class Predict_Image(object):
                 else:
                     new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
                 new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-                image = np.array(new_image)
+                image = np.array(new_image, dtype=np.float32)
                 image = np.expand_dims(image, axis=0)
                 image = image / 255.
                 image_file.close()
@@ -2215,8 +2220,6 @@ class Predict_Image(object):
                     text_list.append(text)
             text = ''.join(text_list)
             for i in vector:
-                # recognition_rate = np.max(i) / np.sum(np.abs(i))
-                # recognition_rate_liat.append(recognition_rate)
                 recognition_rate_liat = [np.max(r) / np.sum(np.abs(r)) for r in i]
             recognition_rate = np.abs(self.recognition_probability(recognition_rate_liat))
             return text, recognition_rate
@@ -2251,10 +2254,18 @@ class Predict_Image(object):
             # 图片预处理，归一化
             photo = np.reshape(self.preprocess_input(photo),
                                [1, IMAGE_SIZES[PHI], IMAGE_SIZES[PHI], 3])
-
-            preds = self.model.predict(photo)
+            if PRUNING:
+                model = self.model
+                input_details = model.get_input_details()
+                output_details = model.get_output_details()
+                model.set_tensor(input_details[0]['index'], photo)
+                model.invoke()
+                pred1 = model.get_tensor(output_details[0]['index'])
+                pred2 = model.get_tensor(output_details[1]['index'])
+                preds = (pred2, pred1)
+            else:
+                preds = self.model.predict(photo)
             # 将预测结果进行解码
-
             results = self.bbox_util.detection_out(preds, self.prior, confidence_threshold=self.confidence)
 
             if len(results[0]) <= 0:
@@ -2396,8 +2407,17 @@ class Predict_Image(object):
             return image
 
         else:
-            model = self.model
-            vertor = model.predict(self.decode_image(image))
+            if PRUNING:
+                model = self.model
+                input_details = model.get_input_details()
+                output_details = model.get_output_details()
+                input_data = self.decode_image(image)
+                model.set_tensor(input_details[0]['index'], input_data)
+                model.invoke()
+                vertor = model.get_tensor(output_details[0]['index'])
+            else:
+                model = self.model
+                vertor = model.predict(self.decode_image(image))
             text, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
             right_text = self.decode_label(image)
             logger.info(f'预测为{{text}},真实为{{right_text}}')
@@ -2435,18 +2455,27 @@ class Predict_Image(object):
 
             crop_img = self.letterbox_image(image, [IMAGE_SIZES[PHI], IMAGE_SIZES[PHI]])
             photo = np.array(crop_img, dtype=np.float32)
-
             # 图片预处理，归一化
             photo = np.reshape(self.preprocess_input(photo),
                                [1, IMAGE_SIZES[PHI], IMAGE_SIZES[PHI], 3])
 
-            preds = self.model.predict(photo)
-            # 将预测结果进行解码
+            if PRUNING:
+                model = self.model
+                input_details = model.get_input_details()
+                output_details = model.get_output_details()
+                model.set_tensor(input_details[0]['index'], photo)
+                model.invoke()
+                pred1 = model.get_tensor(output_details[0]['index'])
+                pred2 = model.get_tensor(output_details[1]['index'])
+                preds = (pred2, pred1)
+            else:
+                preds = self.model.predict(photo)
 
+            # 将预测结果进行解码
             results = self.bbox_util.detection_out(preds, self.prior, confidence_threshold=self.confidence)
 
             if len(results[0]) <= 0:
-                return image
+                return {{'times': str(time.time() - start_time)}}
             results = np.array(results)
 
             # 筛选出其中得分高于confidence的框
@@ -2491,6 +2520,7 @@ class Predict_Image(object):
             times = end_time - start_time
             return {{'result': str(result_list), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
                     'times': str(times)}}
+
 
 
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
@@ -2542,13 +2572,19 @@ class Predict_Image(object):
 
         else:
             start_time = time.time()
-
-            model = self.model
-            vertor = model.predict(self.decode_image(image=image))
+            if PRUNING:
+                model = self.model
+                input_details = model.get_input_details()
+                output_details = model.get_output_details()
+                input_data = self.decode_image(image)
+                model.set_tensor(input_details[0]['index'], input_data)
+                model.invoke()
+                vertor = model.get_tensor(output_details[0]['index'])
+            else:
+                model = self.model
+                vertor = model.predict(self.decode_image(image=image))
             result, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
-
             end_time = time.time()
-
             times = end_time - start_time
             return {{'result': str(result), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
                     'times': str(times)}}
@@ -2579,6 +2615,7 @@ def running_time(time):
             return str('%.2f' % m) + 'm'
     else:
         return str('%.2f' % time) + 's'
+
 
 """
 
@@ -2702,8 +2739,6 @@ from loguru import logger
 from functools import wraps
 from six.moves import xrange
 from functools import reduce
-import tensorflow_addons as tfa
-from plot_model import plot_model
 import xml.etree.ElementTree as ET
 from tensorflow.keras import backend as K
 from adabelief_tf import AdaBeliefOptimizer
@@ -2767,6 +2802,10 @@ DENSE_KERNEL_INITIALIZER = {{
     }}
 }}
 
+
+########################################
+## 自定义层与激活函数
+########################################
 
 class Mish_Activation(tf.keras.layers.Activation):
     def __init__(self, activation, **kwargs):
@@ -3200,6 +3239,55 @@ class Mish(tf.keras.layers.Layer):
         return input_shape
 
 
+class DyReLU(tf.keras.layers.Layer):
+    def __init__(self, channels, reduction=4, k=2, conv_type='2d'):
+        super(DyReLU, self).__init__()
+        self.channels = channels
+        self.k = k
+        self.conv_type = conv_type
+        assert self.conv_type in ['1d', '2d']
+
+        self.fc1 = tf.keras.layers.Dense(
+            channels // reduction,
+            kernel_initializer=tf.keras.initializers.VarianceScaling(
+                scale=1.0,
+                mode="fan_in",
+                distribution="uniform"))
+        self.relu = tf.nn.relu
+        self.fc2 = tf.keras.layers.Dense(
+            2 * k * channels,
+            kernel_initializer=tf.keras.initializers.VarianceScaling(
+                scale=1.0,
+                mode="fan_in",
+                distribution="uniform"))
+        self.sigmoid = tf.math.sigmoid
+
+        self.lambdas = tf.constant([1.] * k + [0.5] * k, dtype=tf.float32)
+        self.init_v = tf.constant([1.] + [0.] * (2 * k - 1), dtype=tf.float32)
+
+    def get_relu_coefs(self, x):
+        theta = tf.reduce_mean(x, axis=-1)
+        if self.conv_type == '2d':
+            theta = tf.reduce_mean(theta, axis=-1)
+        theta = self.fc1(theta)
+        theta = self.relu(theta)
+        theta = self.fc2(theta)
+        theta = 2 * self.sigmoid(theta) - 1
+        return theta
+
+    def forward(self, x):
+        assert x.shape[1] == self.channels
+        theta = self.get_relu_coefs(x)
+        relu_coefs = tf.reshape(theta, [-1, self.channels, 2 * self.k]) * self.lambdas + self.init_v
+
+        # BxCxHxW -> HxWxBxCx1
+        x_perm = tf.expand_dims(tf.transpose(x, [2, 3, 0, 1]), axis=-1)
+        output = x_perm * relu_coefs[:, :, :self.k] + relu_coefs[:, :, self.k:]
+        # HxWxBxCx2 -> BxCxHxW
+        result = tf.transpose(tf.reduce_max(output, axis=-1), [2, 3, 0, 1])
+        return result
+
+
 class DropBlock(tf.keras.layers.Layer):
     # drop機率、block size
     def __init__(self, drop_rate=0.2, block_size=3, **kwargs):
@@ -3500,232 +3588,97 @@ class Decoder(tf.keras.layers.Layer):
         return x, attention_weights
 
 
-class Transformer(tf.keras.Model):
-    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
-                 num_decoder_layers=6, dim_feedforward=2048, rate=0.1,
-                 activation="relu"):
-        super(Transformer, self).__init__()
-
-        self.encoder = Encoder(num_encoder_layers, d_model, nhead, dim_feedforward,
-                               rate)
-
-        self.decoder = Decoder(num_decoder_layers, d_model, nhead, dim_feedforward,
-                               rate)
-
-    def call(self, inp, tar, enc_padding_mask=None,
-             look_ahead_mask=None, dec_padding_mask=None):
-        enc_output = self.encoder(inp, mask=enc_padding_mask)
-        # dec_output.shape == (batch_size, tar_seq_len, d_model)
-        dec_output, attention_weights = self.decoder(
-            tar, enc_output, look_ahead_mask, dec_padding_mask)
-
-        return dec_output, attention_weights
-
-
-class Yolo_model(object):
-    @staticmethod
-    def DarknetConv2D_BN_Mish(*args, **kwargs):
-        no_bias_kwargs = {{'use_bias': False}}
-        no_bias_kwargs.update(kwargs)
-        return compose(
-            DarknetConv2D(*args, **no_bias_kwargs),
-            tf.keras.layers.BatchNormalization(),
-            # tfa.layers.GroupNormalization(),
-            Mish())
+class GhostModule(tf.keras.layers.Layer):
+    def __init__(self, out, ratio, convkernel, dwkernel):
+        super(GhostModule, self).__init__()
+        self.ratio = ratio
+        self.out = out
+        self.conv_out_channel = math.ceil(self.out * 1.0 / ratio)
+        self.conv = tf.keras.layers.Conv2D(int(self.conv_out_channel), (convkernel, convkernel), use_bias=False,
+                                           strides=(1, 1), padding='same', activation=None)
+        self.depthconv = tf.keras.layers.DepthwiseConv2D(dwkernel, 1, padding='same', use_bias=False,
+                                                         depth_multiplier=ratio - 1, activation=None)
+        self.slice = tf.keras.layers.Lambda(self._return_slices,
+                                            arguments={{'channel': int(self.out - self.conv_out_channel)}})
+        self.concat = tf.keras.layers.Concatenate()
 
     @staticmethod
-    def DarknetConv2D_BN_Leaky(*args, **kwargs):
-        no_bias_kwargs = {{'use_bias': False}}
-        no_bias_kwargs.update(kwargs)
-        return compose(
-            DarknetConv2D(*args, **no_bias_kwargs),
-            tf.keras.layers.BatchNormalization(),
-            # tfa.layers.GroupNormalization(),
-            tf.keras.layers.LeakyReLU(alpha=0.1))
+    def _return_slices(x, channel):
+        return x[:, :, :, :channel]
+
+    def call(self, inputs):
+        x = self.conv(inputs)
+        if self.ratio == 1:
+            return x
+        dw = self.depthconv(x)
+        dw = self.slice(dw)
+        output = self.concat([x, dw])
+        return output
+
+
+class SEModule(tf.keras.layers.Layer):
+
+    def __init__(self, filters, ratio):
+        super(SEModule, self).__init__()
+        self.pooling = tf.keras.layers.GlobalAveragePooling2D()
+        self.reshape = tf.keras.layers.Lambda(self._reshape)
+        self.conv1 = tf.keras.layers.Conv2D(int(filters / ratio), (1, 1), strides=(1, 1), padding='same',
+                                            use_bias=False, activation=None)
+        self.conv2 = tf.keras.layers.Conv2D(int(filters), (1, 1), strides=(1, 1), padding='same',
+                                            use_bias=False, activation=None)
+        self.relu = tf.keras.layers.Activation('relu')
+        self.hard_sigmoid = tf.keras.layers.Activation('hard_sigmoid')
 
     @staticmethod
-    def resblock_body(x, num_filters, num_blocks, all_narrow=True):
-        # 进行长和宽的压缩
-        preconv1 = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
-        preconv1 = Yolo_model.DarknetConv2D_BN_Mish(num_filters, (3, 3), strides=(2, 2))(preconv1)
-
-        # 生成一个大的残差边
-        shortconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(preconv1)
-
-        # 主干部分的卷积
-        mainconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(preconv1)
-        # 1x1卷积对通道数进行整合->3x3卷积提取特征，使用残差结构
-        for i in range(num_blocks):
-            y = compose(
-                Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2, (1, 1)),
-                Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (3, 3)))(mainconv)
-            mainconv = tf.keras.layers.Add()([mainconv, y])
-        # 1x1卷积后和残差边堆叠
-        postconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(mainconv)
-        route = tf.keras.layers.Concatenate()([postconv, shortconv])
-
-        # 最后对通道数进行整合
-        return Yolo_model.DarknetConv2D_BN_Mish(num_filters, (1, 1))(route)
+    def _reshape(x):
+        return tf.keras.layers.Reshape((1, 1, int(x.shape[1])))(x)
 
     @staticmethod
-    def darknet_body(x):
-        x = Yolo_model.DarknetConv2D_BN_Mish(32, (3, 3))(x)
-        x = Yolo_model.resblock_body(x, 64, 1, False)
-        x = Yolo_model.resblock_body(x, 128, 2)
-        x = Yolo_model.resblock_body(x, 256, 8)
-        feat1 = x
-        x = Yolo_model.resblock_body(x, 512, 8)
-        feat2 = x
-        x = Yolo_model.resblock_body(x, 1024, 4)
-        feat3 = x
-        return feat1, feat2, feat3
+    def _excite(x, excitation):
+        return x * excitation
 
-    @staticmethod
-    def make_five_convs(x, num_filters):
-        # 五次卷积
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+    def call(self, inputs):
+        x = self.reshape(self.pooling(inputs))
+        x = self.relu(self.conv1(x))
+        excitation = self.hard_sigmoid(self.conv2(x))
+        x = tf.keras.layers.Lambda(self._excite, arguments={{'excitation': excitation}})(inputs)
         return x
 
-    @staticmethod
-    def yolo_body(inputs, num_anchors, num_classes):
-        # 生成darknet53的主干模型
-        feat1, feat2, feat3 = Yolo_model.darknet_body(inputs)
 
-        # 第一个特征层
-        # y1=(batch_size,13,13,3,85)
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(feat3)
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
-        # 使用了SPP结构，即不同尺度的最大池化后堆叠。
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(P5)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(P5)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(P5)
-        P5 = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, P5])
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
+class GBNeck(tf.keras.layers.Layer):
 
-        P5_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1)), tf.keras.layers.UpSampling2D(2))(P5)
+    def __init__(self, dwkernel, strides, exp, out, ratio, use_se):
+        super(GBNeck, self).__init__()
+        self.strides = strides
+        self.use_se = use_se
+        self.conv = tf.keras.layers.Conv2D(out, (1, 1), strides=(1, 1), padding='same',
+                                           activation=None, use_bias=False)
+        self.relu = tf.keras.layers.Activation('relu')
+        self.depthconv1 = tf.keras.layers.DepthwiseConv2D(dwkernel, strides, padding='same', depth_multiplier=ratio - 1,
+                                                          activation=None, use_bias=False)
+        self.depthconv2 = tf.keras.layers.DepthwiseConv2D(dwkernel, strides, padding='same', depth_multiplier=ratio - 1,
+                                                          activation=None, use_bias=False)
+        for i in range(5):
+            setattr(self, f"batchnorm{{i + 1}}", tf.keras.layers.BatchNormalization())
+        self.ghost1 = GhostModule(exp, ratio, 1, 3)
+        self.ghost2 = GhostModule(out, ratio, 1, 3)
+        self.se = SEModule(exp, ratio)
 
-        P4 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
-        P4 = tf.keras.layers.Concatenate()([P4, P5_upsample])
-        P4 = Yolo_model.make_five_convs(P4, 256)
+    def call(self, inputs):
+        x = self.batchnorm1(self.depthconv1(inputs))
+        x = self.batchnorm2(self.conv(x))
 
-        P4_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1)), tf.keras.layers.UpSampling2D(2))(P4)
+        y = self.relu(self.batchnorm3(self.ghost1(inputs)))
+        if self.strides > 1:
+            y = self.relu(self.batchnorm4(self.depthconv2(y)))
+        if self.use_se:
+            y = self.se(y)
+        y = self.batchnorm5(self.ghost2(y))
+        return tf.keras.layers.add([x, y])
 
-        P3 = Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1))(feat1)
-        P3 = tf.keras.layers.Concatenate()([P3, P4_upsample])
-        P3 = Yolo_model.make_five_convs(P3, 128)
-
-        P3_output = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3))(P3)
-        P3_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P3_output)
-
-        # 38x38 output
-        P3_downsample = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(P3)
-        P3_downsample = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3), strides=(2, 2))(P3_downsample)
-        P4 = tf.keras.layers.Concatenate()([P3_downsample, P4])
-        P4 = Yolo_model.make_five_convs(P4, 256)
-
-        P4_output = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(P4)
-        P4_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P4_output)
-
-        # 19x19 output
-        P4_downsample = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(P4)
-        P4_downsample = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3), strides=(2, 2))(P4_downsample)
-        P5 = tf.keras.layers.Concatenate()([P4_downsample, P5])
-        P5 = Yolo_model.make_five_convs(P5, 512)
-
-        P5_output = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
-        P5_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P5_output)
-
-        return tf.keras.Model(inputs, [P5_output, P4_output, P3_output])
-
-
-class Yolo_tiny_model(object):
-    @staticmethod
-    def route_group(input_layer, groups, group_id):
-        # 对通道数进行均等分割，我们取第二部分
-        convs = tf.split(input_layer, num_or_size_splits=groups, axis=-1)
-        return convs[group_id]
-
-    @staticmethod
-    def resblock_body(x, num_filters):
-        # 特征整合
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (3, 3))(x)
-        # 残差边route
-        route = x
-        # 通道分割
-        x = tf.keras.layers.Lambda(Yolo_tiny_model.route_group, arguments={{'groups': 2, 'group_id': 1}})(x)
-        x = Yolo_model.DarknetConv2D_BN_Leaky(int(num_filters / 2), (3, 3))(x)
-
-        # 小残差边route1
-        route_1 = x
-        x = Yolo_model.DarknetConv2D_BN_Leaky(int(num_filters / 2), (3, 3))(x)
-        # 堆叠
-        x = tf.keras.layers.Concatenate()([x, route_1])
-
-        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
-        # 第三个resblockbody会引出来一个有效特征层分支
-        feat = x
-        # 连接
-        x = tf.keras.layers.Concatenate()([route, x])
-        x = tf.keras.layers.MaxPooling2D(pool_size=[2, 2], )(x)
-
-        # 最后对通道数进行整合
-        return x, feat
-
-    @staticmethod
-    def darknet_body(x):
-        # 进行长和宽的压缩
-        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
-        # 416,416,3 -> 208,208,32
-        x = Yolo_model.DarknetConv2D_BN_Leaky(32, (3, 3), strides=(2, 2))(x)
-
-        # 进行长和宽的压缩
-        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
-        # 208,208,32 -> 104,104,64
-        x = Yolo_model.DarknetConv2D_BN_Leaky(64, (3, 3), strides=(2, 2))(x)
-        # 104,104,64 -> 52,52,128
-        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=64)
-        # 52,52,128 -> 26,26,256
-        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=128)
-        # 26,26,256 -> 13,13,512
-        # feat1的shape = 26,26,256
-        x, feat1 = Yolo_tiny_model.resblock_body(x, num_filters=256)
-
-        x = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(x)
-
-        feat2 = x
-        return feat1, feat2
-
-    @staticmethod
-    def yolo_body(inputs, num_anchors, num_classes):
-        # 生成darknet53的主干模型
-        # 首先我们会获取到两个有效特征层
-        # feat1 26x26x256
-        # feat2 13x13x512
-        feat1, feat2 = Yolo_tiny_model.darknet_body(inputs)
-
-        # 13x13x512 -> 13x13x256
-        P5 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
-
-        P5_output = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(P5)
-        P5_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P5_output)
-
-        # Conv+UpSampling2D 13x13x256 -> 26x26x128
-        P5_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1)), tf.keras.layers.UpSampling2D(2))(P5)
-
-        # 26x26x(128+256) 26x26x384
-        P4 = tf.keras.layers.Concatenate()([feat1, P5_upsample])
-
-        P4_output = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3))(P4)
-        P4_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P4_output)
-
-        return tf.keras.Model(inputs, [P5_output, P4_output])
+    def get_config(self):
+        config = super(GBNeck, self).get_config()
+        return config
 
 
 class Yolo_Loss(object):
@@ -3946,9 +3899,9 @@ class Yolo_Loss(object):
 
             confidence_loss = K.sum(confidence_loss) / mf
             class_loss = K.sum(class_loss) / mf
-            # location_loss = tf.reduce_mean(tf.reduce_sum(location_loss, axis=[1,2,3,4]))
-            # confidence_loss = tf.reduce_mean(tf.reduce_sum(confidence_loss, axis=[1,2,3,4]))
-            # class_loss = tf.reduce_mean(tf.reduce_sum(class_loss, axis=[1,2,3,4]))
+            location_loss = tf.reduce_mean(location_loss)
+            confidence_loss = tf.reduce_mean(confidence_loss)
+            class_loss = tf.reduce_mean(class_loss)
             loss += location_loss + confidence_loss + class_loss
         loss = K.expand_dims(loss, axis=-1)
         return loss
@@ -4147,6 +4100,542 @@ class YOLO_anchors(object):
         return boxes_, scores_, classes_
 
 
+class Efficientdet_Loss(object):
+    @staticmethod
+    def focal(alpha=0.25, gamma=2.0):
+        def _focal(y_true, y_pred):
+            # y_true [batch_size, num_anchor, num_classes+1]
+            # y_pred [batch_size, num_anchor, num_classes]
+            labels = y_true[:, :, :-1]
+            anchor_state = y_true[:, :, -1]  # -1 是需要忽略的, 0 是背景, 1 是存在目标
+            classification = y_pred
+
+            # 找出存在目标的先验框
+            indices_for_object = tf.where(tf.keras.backend.equal(anchor_state, 1))
+            labels_for_object = tf.gather_nd(labels, indices_for_object)
+            classification_for_object = tf.gather_nd(classification, indices_for_object)
+
+            # 计算每一个先验框应该有的权重
+            alpha_factor_for_object = tf.keras.backend.ones_like(labels_for_object) * alpha
+            alpha_factor_for_object = tf.where(tf.keras.backend.equal(labels_for_object, 1), alpha_factor_for_object,
+                                               1 - alpha_factor_for_object)
+            focal_weight_for_object = tf.where(tf.keras.backend.equal(labels_for_object, 1),
+                                               1 - classification_for_object, classification_for_object)
+            focal_weight_for_object = alpha_factor_for_object * focal_weight_for_object ** gamma
+
+            # 将权重乘上所求得的交叉熵
+            cls_loss_for_object = focal_weight_for_object * tf.keras.backend.binary_crossentropy(labels_for_object,
+                                                                                                 classification_for_object)
+
+            # 找出实际上为背景的先验框
+            indices_for_back = tf.where(tf.keras.backend.equal(anchor_state, 0))
+            labels_for_back = tf.gather_nd(labels, indices_for_back)
+            classification_for_back = tf.gather_nd(classification, indices_for_back)
+
+            # 计算每一个先验框应该有的权重
+            alpha_factor_for_back = tf.keras.backend.ones_like(labels_for_back) * (1 - alpha)
+            focal_weight_for_back = classification_for_back
+            focal_weight_for_back = alpha_factor_for_back * focal_weight_for_back ** gamma
+
+            # 将权重乘上所求得的交叉熵
+            cls_loss_for_back = focal_weight_for_back * tf.keras.backend.binary_crossentropy(labels_for_back,
+                                                                                             classification_for_back)
+
+            # 标准化，实际上是正样本的数量
+            normalizer = tf.where(tf.keras.backend.equal(anchor_state, 1))
+            normalizer = tf.keras.backend.cast(tf.keras.backend.shape(normalizer)[0], tf.keras.backend.floatx())
+            normalizer = tf.keras.backend.maximum(tf.keras.backend.cast_to_floatx(1.0), normalizer)
+
+            # 将所获得的loss除上正样本的数量
+            cls_loss_for_object = tf.keras.backend.sum(cls_loss_for_object)
+            cls_loss_for_back = tf.keras.backend.sum(cls_loss_for_back)
+
+            # 总的loss
+            loss = (cls_loss_for_object + cls_loss_for_back) / normalizer
+
+            return loss
+
+        return _focal
+
+    @staticmethod
+    def smooth_l1(sigma=3.0):
+        sigma_squared = sigma ** 2
+
+        def _smooth_l1(y_true, y_pred):
+            regression = y_pred
+            regression_target = y_true[:, :, :-1]
+            anchor_state = y_true[:, :, -1]
+
+            indices = tf.where(tf.keras.backend.equal(anchor_state, 1))
+            regression = tf.gather_nd(regression, indices)
+            regression_target = tf.gather_nd(regression_target, indices)
+
+            # compute smooth L1 loss
+            # f(x) = 0.5 * (sigma * x)^2          if |x| < 1 / sigma / sigma
+            #        |x| - 0.5 / sigma / sigma    otherwise
+            regression_diff = regression - regression_target
+            regression_diff = tf.keras.backend.abs(regression_diff)
+            regression_loss = tf.where(
+                tf.keras.backend.less(regression_diff, 1.0 / sigma_squared),
+                0.5 * sigma_squared * tf.keras.backend.pow(regression_diff, 2),
+                regression_diff - 0.5 / sigma_squared
+            )
+
+            # compute the normalizer: the number of positive anchors
+            normalizer = tf.keras.backend.maximum(1, tf.keras.backend.shape(indices)[0])
+            normalizer = tf.keras.backend.cast(normalizer, dtype=tf.keras.backend.floatx())
+            return tf.keras.backend.sum(regression_loss) / normalizer / 4
+
+        return _smooth_l1
+
+
+class Efficientdet_anchors(object):
+    @staticmethod
+    def get_swish():
+        def swish(x):
+            return x * tf.keras.backend.sigmoid(x)
+
+        return swish
+
+    @staticmethod
+    def get_dropout():
+        class FixedDropout(tf.keras.layers.Dropout):
+            def _get_noise_shape(self, inputs):
+                if self.noise_shape is None:
+                    return self.noise_shape
+
+                symbolic_shape = tf.keras.backend.shape(inputs)
+                noise_shape = [symbolic_shape[axis] if shape is None else shape
+                               for axis, shape in enumerate(self.noise_shape)]
+                return tuple(noise_shape)
+
+        return FixedDropout
+
+    @staticmethod
+    def round_filters(filters, width_coefficient, depth_divisor):
+        filters *= width_coefficient
+        new_filters = int(filters + depth_divisor / 2) // depth_divisor * depth_divisor
+        new_filters = max(depth_divisor, new_filters)
+        if new_filters < 0.9 * filters:
+            new_filters += depth_divisor
+        return int(new_filters)
+
+    @staticmethod
+    def round_repeats(repeats, depth_coefficient):
+        return int(math.ceil(depth_coefficient * repeats))
+
+    @staticmethod
+    def mb_conv_block(inputs, block_args, activation, drop_rate=None):
+        has_se = (block_args.se_ratio is not None) and (0 < block_args.se_ratio <= 1)
+        bn_axis = 3
+
+        Dropout = Efficientdet_anchors.get_dropout()
+
+        filters = block_args.input_filters * block_args.expand_ratio
+        if block_args.expand_ratio != 1:
+            x = tf.keras.layers.Conv2D(filters, 1,
+                                       padding='same',
+                                       use_bias=False,
+                                       kernel_initializer=CONV_KERNEL_INITIALIZER)(inputs)
+            x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
+            x = tf.keras.layers.Activation(activation)(x)
+        else:
+            x = inputs
+
+        x = tf.keras.layers.DepthwiseConv2D(block_args.kernel_size,
+                                            strides=block_args.strides,
+                                            padding='same',
+                                            use_bias=False,
+                                            depthwise_initializer=CONV_KERNEL_INITIALIZER)(x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
+        x = tf.keras.layers.Activation(activation)(x)
+
+        if has_se:
+            num_reduced_filters = max(1, int(
+                block_args.input_filters * block_args.se_ratio
+            ))
+            se_tensor = tf.keras.layers.GlobalAveragePooling2D()(x)
+
+            target_shape = (1, 1, filters) if tf.keras.backend.image_data_format() == 'channels_last' else (
+                filters, 1, 1)
+            se_tensor = tf.keras.layers.Reshape(target_shape)(se_tensor)
+            se_tensor = tf.keras.layers.Conv2D(num_reduced_filters, 1,
+                                               activation=activation,
+                                               padding='same',
+                                               use_bias=True,
+                                               kernel_initializer=CONV_KERNEL_INITIALIZER)(se_tensor)
+            se_tensor = tf.keras.layers.Conv2D(filters, 1,
+                                               activation='sigmoid',
+                                               padding='same',
+                                               use_bias=True,
+                                               kernel_initializer=CONV_KERNEL_INITIALIZER)(se_tensor)
+            if tf.keras.backend.backend() == 'theano':
+                pattern = ([True, True, True, False] if tf.keras.backend.image_data_format() == 'channels_last'
+                           else [True, False, True, True])
+                se_tensor = tf.keras.layers.Lambda(
+                    lambda x: tf.keras.backend.pattern_broadcast(x, pattern))(se_tensor)
+            x = tf.keras.layers.multiply([x, se_tensor])
+
+        # Output phase
+        x = tf.keras.layers.Conv2D(block_args.output_filters, 1,
+                                   padding='same',
+                                   use_bias=False,
+                                   kernel_initializer=CONV_KERNEL_INITIALIZER)(x)
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
+        if block_args.id_skip and all(
+                s == 1 for s in block_args.strides
+        ) and block_args.input_filters == block_args.output_filters:
+            if drop_rate and (drop_rate > 0):
+                x = Dropout(drop_rate,
+                            noise_shape=(None, 1, 1, 1))(x)
+            x = tf.keras.layers.add([x, inputs])
+
+        return x
+
+    @staticmethod
+    def iou(b1, b2):
+        b1_x1, b1_y1, b1_x2, b1_y2 = b1[0], b1[1], b1[2], b1[3]
+        b2_x1, b2_y1, b2_x2, b2_y2 = b2[:, 0], b2[:, 1], b2[:, 2], b2[:, 3]
+
+        inter_rect_x1 = np.maximum(b1_x1, b2_x1)
+        inter_rect_y1 = np.maximum(b1_y1, b2_y1)
+        inter_rect_x2 = np.minimum(b1_x2, b2_x2)
+        inter_rect_y2 = np.minimum(b1_y2, b2_y2)
+
+        inter_area = np.maximum(inter_rect_x2 - inter_rect_x1, 0) * np.maximum(inter_rect_y2 - inter_rect_y1, 0)
+
+        area_b1 = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+        area_b2 = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+
+        iou = inter_area / np.maximum((area_b1 + area_b2 - inter_area), 1e-6)
+        return iou
+
+    @staticmethod
+    def generate_anchors(base_size=16, ratios=None, scales=None):
+        if ratios is None:
+            ratios = AnchorParameters.default.ratios
+
+        if scales is None:
+            scales = AnchorParameters.default.scales
+
+        num_anchors = len(ratios) * len(scales)
+
+        anchors = np.zeros((num_anchors, 4))
+
+        anchors[:, 2:] = base_size * np.tile(scales, (2, len(ratios))).T
+
+        areas = anchors[:, 2] * anchors[:, 3]
+
+        anchors[:, 2] = np.sqrt(areas / np.repeat(ratios, len(scales)))
+        anchors[:, 3] = anchors[:, 2] * np.repeat(ratios, len(scales))
+
+        anchors[:, 0::2] -= np.tile(anchors[:, 2] * 0.5, (2, 1)).T
+        anchors[:, 1::2] -= np.tile(anchors[:, 3] * 0.5, (2, 1)).T
+
+        return anchors
+
+    @staticmethod
+    def shift(shape, stride, anchors):
+        shift_x = (np.arange(0, shape[1], dtype=tf.keras.backend.floatx()) + 0.5) * stride
+        shift_y = (np.arange(0, shape[0], dtype=tf.keras.backend.floatx()) + 0.5) * stride
+
+        shift_x, shift_y = np.meshgrid(shift_x, shift_y)
+
+        shift_x = np.reshape(shift_x, [-1])
+        shift_y = np.reshape(shift_y, [-1])
+
+        shifts = np.stack([
+            shift_x,
+            shift_y,
+            shift_x,
+            shift_y
+        ], axis=0)
+
+        shifts = np.transpose(shifts)
+        number_of_anchors = np.shape(anchors)[0]
+
+        k = np.shape(shifts)[0]
+
+        shifted_anchors = np.reshape(anchors, [1, number_of_anchors, 4]) + np.array(np.reshape(shifts, [k, 1, 4]),
+                                                                                    tf.keras.backend.floatx())
+        shifted_anchors = np.reshape(shifted_anchors, [k * number_of_anchors, 4])
+
+        return shifted_anchors
+
+    @staticmethod
+    def get_anchors(image_size):
+        border = image_size
+        features = [image_size / 8, image_size / 16, image_size / 32, image_size / 64, image_size / 128]
+        shapes = []
+        for feature in features:
+            shapes.append(feature)
+        all_anchors = []
+        for i in range(5):
+            anchors = Efficientdet_anchors.generate_anchors(AnchorParameters.default.sizes[i])
+            shifted_anchors = Efficientdet_anchors.shift([shapes[i], shapes[i]], AnchorParameters.default.strides[i],
+                                                         anchors)
+            all_anchors.append(shifted_anchors)
+
+        all_anchors = np.concatenate(all_anchors, axis=0)
+        all_anchors = all_anchors / border
+        return all_anchors
+
+    @staticmethod
+    def SeparableConvBlock(num_channels, kernel_size, strides):
+        f1 = tf.keras.layers.SeparableConv2D(num_channels, kernel_size=kernel_size, strides=strides, padding='same',
+                                             use_bias=True)
+        f2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)
+        return reduce(lambda f, g: lambda *args, **kwargs: g(f(*args, **kwargs)), (f1, f2))
+
+    @staticmethod
+    def build_wBiFPN(features, num_channels, id):
+        if id == 0:
+            _, _, C3, C4, C5 = features
+            # 第一次BIFPN需要 下采样 与 降通道 获得 p3_in p4_in p5_in p6_in p7_in
+            # -----------------------------下采样 与 降通道----------------------------#
+            P3_in = C3
+            P3_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P3_in)
+            P3_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P3_in)
+
+            P4_in = C4
+            P4_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
+            P4_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_1)
+            P4_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
+            P4_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_2)
+
+            P5_in = C5
+            P5_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
+            P5_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_1)
+            P5_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
+            P5_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_2)
+
+            P6_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(C5)
+            P6_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P6_in)
+            P6_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
+
+            P7_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
+            # -------------------------------------------------------------------------#
+
+            # --------------------------构建BIFPN的上下采样循环-------------------------#
+            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
+            P6_td = wBiFPNAdd()([P6_in, P7_U])
+            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
+            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
+
+            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
+            P5_td = wBiFPNAdd()([P5_in_1, P6_U])
+            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
+            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
+
+            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
+            P4_td = wBiFPNAdd()([P4_in_1, P5_U])
+            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
+            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
+
+            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
+            P3_out = wBiFPNAdd()([P3_in, P4_U])
+            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
+            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P3_out)
+
+            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
+            P4_out = wBiFPNAdd()([P4_in_2, P4_td, P3_D])
+            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
+            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P4_out)
+
+            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
+            P5_out = wBiFPNAdd()([P5_in_2, P5_td, P4_D])
+            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
+            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P5_out)
+
+            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
+            P6_out = wBiFPNAdd()([P6_in, P6_td, P5_D])
+            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
+            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P6_out)
+
+            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
+            P7_out = wBiFPNAdd()([P7_in, P6_D])
+            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
+            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P7_out)
+
+        else:
+            P3_in, P4_in, P5_in, P6_in, P7_in = features
+            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
+            P6_td = wBiFPNAdd()([P6_in, P7_U])
+            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
+            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
+
+            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
+            P5_td = wBiFPNAdd()([P5_in, P6_U])
+            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
+            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
+
+            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
+            P4_td = wBiFPNAdd()([P4_in, P5_U])
+            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
+            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
+
+            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
+            P3_out = wBiFPNAdd()([P3_in, P4_U])
+            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
+            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P3_out)
+
+            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
+            P4_out = wBiFPNAdd()([P4_in, P4_td, P3_D])
+            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
+            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P4_out)
+
+            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
+            P5_out = wBiFPNAdd()([P5_in, P5_td, P4_D])
+            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
+            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P5_out)
+
+            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
+            P6_out = wBiFPNAdd()([P6_in, P6_td, P5_D])
+            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
+            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P6_out)
+
+            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
+            P7_out = wBiFPNAdd()([P7_in, P6_D])
+            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
+            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P7_out)
+
+        return [P3_out, P4_out, P5_out, P6_out, P7_out]
+
+    @staticmethod
+    def build_BiFPN(features, num_channels, id):
+        if id == 0:
+            # 第一次BIFPN需要 下采样 与 降通道 获得 p3_in p4_in p5_in p6_in p7_in
+            # -----------------------------下采样 与 降通道----------------------------#
+            _, _, C3, C4, C5 = features
+            P3_in = C3
+            P3_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P3_in)
+            P3_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P3_in)
+
+            P4_in = C4
+            P4_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
+            P4_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_1)
+            P4_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
+            P4_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_2)
+
+            P5_in = C5
+            P5_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
+            P5_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_1)
+            P5_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
+            P5_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_2)
+
+            P6_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(C5)
+            P6_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P6_in)
+            P6_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
+
+            P7_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
+            # -------------------------------------------------------------------------#
+
+            # --------------------------构建BIFPN的上下采样循环-------------------------#
+            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
+            P6_td = tf.keras.layers.Add()([P6_in, P7_U])
+            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
+            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
+
+            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
+            P5_td = tf.keras.layers.Add()([P5_in_1, P6_U])
+            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
+            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
+
+            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
+            P4_td = tf.keras.layers.Add()([P4_in_1, P5_U])
+            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
+            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
+
+            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
+            P3_out = tf.keras.layers.Add()([P3_in, P4_U])
+            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
+            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P3_out)
+
+            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
+            P4_out = tf.keras.layers.Add()([P4_in_2, P4_td, P3_D])
+            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
+            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P4_out)
+
+            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
+            P5_out = tf.keras.layers.Add()([P5_in_2, P5_td, P4_D])
+            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
+            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P5_out)
+
+            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
+            P6_out = tf.keras.layers.Add()([P6_in, P6_td, P5_D])
+            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
+            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P6_out)
+
+            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
+            P7_out = tf.keras.layers.Add()([P7_in, P6_D])
+            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
+            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P7_out)
+
+        else:
+            P3_in, P4_in, P5_in, P6_in, P7_in = features
+            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
+            P6_td = tf.keras.layers.Add()([P6_in, P7_U])
+            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
+            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
+
+            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
+            P5_td = tf.keras.layers.Add()([P5_in, P6_U])
+            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
+            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
+
+            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
+            P4_td = tf.keras.layers.Add()([P4_in, P5_U])
+            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
+            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
+
+            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
+            P3_out = tf.keras.layers.Add()([P3_in, P4_U])
+            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
+            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P3_out)
+
+            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
+            P4_out = tf.keras.layers.Add()([P4_in, P4_td, P3_D])
+            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
+            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P4_out)
+
+            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
+            P5_out = tf.keras.layers.Add()([P5_in, P5_td, P4_D])
+            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
+            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P5_out)
+
+            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
+            P6_out = tf.keras.layers.Add()([P6_in, P6_td, P5_D])
+            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
+            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P6_out)
+
+            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
+            P7_out = tf.keras.layers.Add()([P7_in, P6_D])
+            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
+            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
+                P7_out)
+        return [P3_out, P4_out, P5_out, P6_out, P7_out]
+
+
 class AnchorGenerator:
     def __init__(self, cluster_number):
         self.cluster_number = cluster_number
@@ -4194,6 +4683,388 @@ class AnchorGenerator:
         result = result[np.lexsort(result.T[0, None])]
         logger.debug("Accuracy: {{:.2f}}%".format(self.avg_iou(boxes, result) * 100))
         return result
+
+
+class CTCLoss(tf.keras.losses.Loss):
+    def __init__(self, logits_time_major=False, blank_index=-1,
+                 reduction=tf.keras.losses.Reduction.AUTO, name='ctc_loss'):
+        super().__init__(reduction=reduction, name=name)
+        self.logits_time_major = logits_time_major
+        self.blank_index = blank_index
+
+    def call(self, y_true, y_pred):
+        y_true = tf.cast(y_true, tf.int32)
+        logit_length = tf.fill([tf.shape(y_pred)[0]], tf.shape(y_pred)[1])
+        loss = tf.nn.ctc_loss(
+            labels=y_true,
+            logits=y_pred,
+            label_length=None,
+            logit_length=logit_length,
+            logits_time_major=self.logits_time_major,
+            blank_index=self.blank_index
+        )
+        return tf.reduce_mean(loss)
+
+
+class WordAccuracy(tf.keras.metrics.Metric):
+
+    def __init__(self, name='word_acc', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.total = self.add_weight(name='total', dtype=tf.int32,
+                                     initializer=tf.zeros_initializer())
+        self.count = self.add_weight(name='count', dtype=tf.int32,
+                                     initializer=tf.zeros_initializer())
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        b = tf.shape(y_true)[0]
+        max_width = tf.maximum(tf.shape(y_true)[1], tf.shape(y_pred)[1])
+        logit_length = tf.fill([tf.shape(y_pred)[0]], tf.shape(y_pred)[1])
+        decoded, _ = tf.nn.ctc_greedy_decoder(
+            inputs=tf.transpose(y_pred, perm=[1, 0, 2]),
+            sequence_length=logit_length)
+        y_true = tf.sparse.reset_shape(y_true, [b, max_width])
+        y_pred = tf.sparse.reset_shape(decoded[0], [b, max_width])
+        y_true = tf.sparse.to_dense(y_true, default_value=-1)
+        y_pred = tf.sparse.to_dense(y_pred, default_value=-1)
+        y_true = tf.cast(y_true, tf.int32)
+        y_pred = tf.cast(y_pred, tf.int32)
+        values = tf.math.reduce_any(tf.math.not_equal(y_true, y_pred), axis=1)
+        values = tf.cast(values, tf.int32)
+        values = tf.reduce_sum(values)
+        self.total.assign_add(b)
+        self.count.assign_add(b - values)
+
+    def result(self):
+        return self.count / self.total
+
+    def reset_states(self):
+        self.count.assign(0)
+        self.total.assign(0)
+
+
+class Settings(object):
+    @staticmethod
+    def settings():
+        with open(n_class_file, 'r', encoding='utf-8') as f:
+            n_class = len(json.loads(f.read()))
+        return n_class + 1
+
+    @staticmethod
+    def settings_num_classes():
+        with open(n_class_file, 'r', encoding='utf-8') as f:
+            n_class = len(json.loads(f.read()))
+        return n_class
+
+
+########################################
+# 分割线
+########################################
+
+
+########################################
+## 模型定义
+########################################
+
+# GhostNet
+class GhostNet(object):
+
+    @staticmethod
+    def ghostnet(x):
+        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = tf.keras.layers.Conv2D(960, (1, 1), strides=(1, 1), padding='same', data_format='channels_last',
+                                   activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        return x
+
+
+# Transformer
+class Transformer(tf.keras.Model):
+    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+                 num_decoder_layers=6, dim_feedforward=2048, rate=0.1,
+                 activation="relu"):
+        super(Transformer, self).__init__()
+
+        self.encoder = Encoder(num_encoder_layers, d_model, nhead, dim_feedforward,
+                               rate)
+
+        self.decoder = Decoder(num_decoder_layers, d_model, nhead, dim_feedforward,
+                               rate)
+
+    def call(self, inp, tar, enc_padding_mask=None,
+             look_ahead_mask=None, dec_padding_mask=None):
+        enc_output = self.encoder(inp, mask=enc_padding_mask)
+        # dec_output.shape == (batch_size, tar_seq_len, d_model)
+        dec_output, attention_weights = self.decoder(
+            tar, enc_output, look_ahead_mask, dec_padding_mask)
+
+        return dec_output, attention_weights
+
+
+class Yolo_model(object):
+    @staticmethod
+    def DarknetConv2D_BN_Mish(*args, **kwargs):
+        no_bias_kwargs = {{'use_bias': False}}
+        no_bias_kwargs.update(kwargs)
+        return compose(
+            DarknetConv2D(*args, **no_bias_kwargs),
+            tf.keras.layers.BatchNormalization(),
+            # tfa.layers.GroupNormalization(),
+            Mish())
+
+    @staticmethod
+    def DarknetConv2D_BN_Leaky(*args, **kwargs):
+        no_bias_kwargs = {{'use_bias': False}}
+        no_bias_kwargs.update(kwargs)
+        return compose(
+            DarknetConv2D(*args, **no_bias_kwargs),
+            tf.keras.layers.BatchNormalization(),
+            # tfa.layers.GroupNormalization(),
+            tf.keras.layers.LeakyReLU(alpha=0.1))
+
+    @staticmethod
+    def resblock_body(x, num_filters, num_blocks, all_narrow=True):
+        # 进行长和宽的压缩
+        preconv1 = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
+        preconv1 = Yolo_model.DarknetConv2D_BN_Mish(num_filters, (3, 3), strides=(2, 2))(preconv1)
+
+        # 生成一个大的残差边
+        shortconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(preconv1)
+
+        # 主干部分的卷积
+        mainconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(preconv1)
+        # 1x1卷积对通道数进行整合->3x3卷积提取特征，使用残差结构
+        for i in range(num_blocks):
+            y = compose(
+                Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2, (1, 1)),
+                Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (3, 3)))(mainconv)
+            mainconv = tf.keras.layers.Add()([mainconv, y])
+        # 1x1卷积后和残差边堆叠
+        postconv = Yolo_model.DarknetConv2D_BN_Mish(num_filters // 2 if all_narrow else num_filters, (1, 1))(mainconv)
+        route = tf.keras.layers.Concatenate()([postconv, shortconv])
+
+        # 最后对通道数进行整合
+        return Yolo_model.DarknetConv2D_BN_Mish(num_filters, (1, 1))(route)
+
+    @staticmethod
+    def darknet_body(x):
+        x = Yolo_model.DarknetConv2D_BN_Mish(32, (3, 3))(x)
+        x = Yolo_model.resblock_body(x, 64, 1, False)
+        x = Yolo_model.resblock_body(x, 128, 2)
+        x = Yolo_model.resblock_body(x, 256, 8)
+        feat1 = x
+        x = Yolo_model.resblock_body(x, 512, 8)
+        feat2 = x
+        x = Yolo_model.resblock_body(x, 1024, 4)
+        feat3 = x
+        return feat1, feat2, feat3
+
+    @staticmethod
+    def make_five_convs(x, num_filters):
+        # 五次卷积
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+        return x
+
+    @staticmethod
+    def yolo_body(inputs, num_anchors, num_classes):
+        # 生成darknet53的主干模型
+        feat1, feat2, feat3 = Yolo_model.darknet_body(inputs)
+
+        # 第一个特征层
+        # y1=(batch_size,13,13,3,85)
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(feat3)
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
+        # 使用了SPP结构，即不同尺度的最大池化后堆叠。
+        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(P5)
+        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(P5)
+        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(P5)
+        P5 = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, P5])
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(512, (1, 1))(P5)
+
+        P5_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1)), tf.keras.layers.UpSampling2D(2))(P5)
+
+        P4 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
+        P4 = tf.keras.layers.Concatenate()([P4, P5_upsample])
+        P4 = Yolo_model.make_five_convs(P4, 256)
+
+        P4_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1)), tf.keras.layers.UpSampling2D(2))(P4)
+
+        P3 = Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1))(feat1)
+        P3 = tf.keras.layers.Concatenate()([P3, P4_upsample])
+        P3 = Yolo_model.make_five_convs(P3, 128)
+
+        P3_output = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3))(P3)
+        P3_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P3_output)
+
+        # 38x38 output
+        P3_downsample = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(P3)
+        P3_downsample = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3), strides=(2, 2))(P3_downsample)
+        P4 = tf.keras.layers.Concatenate()([P3_downsample, P4])
+        P4 = Yolo_model.make_five_convs(P4, 256)
+
+        P4_output = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(P4)
+        P4_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P4_output)
+
+        # 19x19 output
+        P4_downsample = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(P4)
+        P4_downsample = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3), strides=(2, 2))(P4_downsample)
+        P5 = tf.keras.layers.Concatenate()([P4_downsample, P5])
+        P5 = Yolo_model.make_five_convs(P5, 512)
+
+        P5_output = Yolo_model.DarknetConv2D_BN_Leaky(1024, (3, 3))(P5)
+        P5_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P5_output)
+
+        return tf.keras.Model(inputs, [P5_output, P4_output, P3_output])
+
+
+class Yolo_tiny_model(object):
+    @staticmethod
+    def route_group(input_layer, groups, group_id):
+        # 对通道数进行均等分割，我们取第二部分
+        convs = tf.split(input_layer, num_or_size_splits=groups, axis=-1)
+        return convs[group_id]
+
+    @staticmethod
+    def resblock_body(x, num_filters):
+        # 特征整合
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (3, 3))(x)
+        # 残差边route
+        route = x
+        # 通道分割
+        x = tf.keras.layers.Lambda(Yolo_tiny_model.route_group, arguments={{'groups': 2, 'group_id': 1}})(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(int(num_filters / 2), (3, 3))(x)
+
+        # 小残差边route1
+        route_1 = x
+        x = Yolo_model.DarknetConv2D_BN_Leaky(int(num_filters / 2), (3, 3))(x)
+        # 堆叠
+        x = tf.keras.layers.Concatenate()([x, route_1])
+
+        x = Yolo_model.DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+        # 第三个resblockbody会引出来一个有效特征层分支
+        feat = x
+        # 连接
+        x = tf.keras.layers.Concatenate()([route, x])
+        x = tf.keras.layers.MaxPooling2D(pool_size=[2, 2], )(x)
+
+        # 最后对通道数进行整合
+        return x, feat
+
+    @staticmethod
+    def darknet_body(x):
+        # 进行长和宽的压缩
+        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
+        # 416,416,3 -> 208,208,32
+        x = Yolo_model.DarknetConv2D_BN_Leaky(32, (3, 3), strides=(2, 2))(x)
+
+        # 进行长和宽的压缩
+        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
+        # 208,208,32 -> 104,104,64
+        x = Yolo_model.DarknetConv2D_BN_Leaky(64, (3, 3), strides=(2, 2))(x)
+        # 104,104,64 -> 52,52,128
+        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=64)
+        # 52,52,128 -> 26,26,256
+        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=128)
+        # 26,26,256 -> 13,13,512
+        # feat1的shape = 26,26,256
+        x, feat1 = Yolo_tiny_model.resblock_body(x, num_filters=256)
+
+        x = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(x)
+
+        feat2 = x
+        return feat1, feat2
+
+    @staticmethod
+    def yolo_body(inputs, num_anchors, num_classes):
+        # 生成darknet53的主干模型
+        # 首先我们会获取到两个有效特征层
+        # feat1 26x26x256
+        # feat2 13x13x512
+        feat1, feat2 = Yolo_tiny_model.darknet_body(inputs)
+        logger.debug(feat1)
+        logger.debug(feat2)
+        # 13x13x512 -> 13x13x256
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
+
+        P5_output = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(P5)
+        P5_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P5_output)
+
+        # Conv+UpSampling2D 13x13x256 -> 26x26x128
+        P5_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1)), tf.keras.layers.UpSampling2D(2))(P5)
+
+        # 26x26x(128+256) 26x26x384
+        P4 = tf.keras.layers.Concatenate()([feat1, P5_upsample])
+
+        P4_output = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3))(P4)
+        P4_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P4_output)
+        return tf.keras.Model(inputs, [P5_output, P4_output])
+
+    @staticmethod
+    def yolo_body_ghostdet(inputs, num_anchors, num_classes):
+        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(inputs)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)  # 208
+        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)  # 104
+        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
+        feat1 = GBNeck(dwkernel=3, strides=2, exp=240, out=256, ratio=2, use_se=False)(x)  # 26
+        feat2 = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(feat1)
+        feat2 = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(feat2)
+        feat2 = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(feat2)
+        feat2 = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(feat2)
+        feat2 = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(feat2)
+        feat2 = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(feat2)  # 13
+        feat2 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(feat2)
+        feat2 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(feat2)
+        feat2 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(feat2)
+        feat2 = GBNeck(dwkernel=5, strides=1, exp=960, out=512, ratio=2, use_se=True)(feat2)
+        # logger.debug(feat1)
+        # logger.debug(feat2)
+
+        P5 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
+
+        P5_output = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(P5)
+        P5_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P5_output)
+
+        # Conv+UpSampling2D 13x13x256 -> 26x26x128
+        P5_upsample = compose(Yolo_model.DarknetConv2D_BN_Leaky(128, (1, 1)), tf.keras.layers.UpSampling2D(2))(P5)
+
+        # 26x26x(128+256) 26x26x384
+        P4 = tf.keras.layers.Concatenate()([feat1, P5_upsample])
+
+        P4_output = Yolo_model.DarknetConv2D_BN_Leaky(256, (3, 3))(P4)
+        P4_output = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(P4_output)
+        return tf.keras.Model(inputs, [P5_output, P4_output])
 
 
 # RES34_DETR
@@ -4983,6 +5854,7 @@ class Densenet(object):
         x = tf.keras.layers.BatchNormalization()(inputs, training=training)
         # x = tf.nn.swish(x)
         x = tf.keras.layers.Activation('Mish_Activation')(x)
+
         x = tf.keras.layers.Conv2D(filters=4 * growth_rate,
                                    kernel_size=(1, 1),
                                    strides=1,
@@ -5057,6 +5929,115 @@ class Densenet(object):
         num_channels = compression_rate * num_channels
         # x = Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
         x = Densenet.densenet_denseblock(x, num_layers=block_layers[3], growth_rate=growth_rate, drop_rate=drop_rate)
+        return x
+
+
+class Densenet_squeeze(object):
+    @staticmethod
+    def squeeze(inputs, input_channels, r=16, **kwargs):
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.keras.layers.Dense(units=input_channels // r)(x)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Dense(units=input_channels)(x)
+        x = tf.nn.sigmoid(x)
+        x = tf.expand_dims(x, axis=1)
+        x = tf.expand_dims(x, axis=1)
+        output = tf.keras.layers.multiply(inputs=[inputs, x])
+        return output
+
+    @staticmethod
+    def densenet_bottleneck(inputs, growth_rate, drop_rate, training=None, **kwargs):
+        # x = tf.keras.layers.BatchNormalization()(inputs, training=training)
+        # x = tf.nn.swish(x)
+        x = FRN()(inputs)
+        # x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = DyReLU(growth_rate)(x)
+        x = tf.keras.layers.Conv2D(filters=4 * growth_rate,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
+        x = DyReLU(4 * growth_rate)(x)
+        # x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = Densenet_squeeze.squeeze(x, 4 * growth_rate)
+        x = tf.keras.layers.Conv2D(filters=growth_rate,
+                                   kernel_size=(3, 3),
+                                   strides=1,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
+        # x = tf.keras.layers.Dropout(rate=drop_rate)(x)
+        # x = tf.keras.layers.GaussianDropout(rate=drop_rate)(x)
+        x = Densenet_squeeze.squeeze(x, growth_rate)
+        x = tf.keras.layers.GaussianNoise(stddev=drop_rate)(x)
+        # x = DropBlock(drop_rate=drop_rate)(x)
+        return x
+
+    @staticmethod
+    def densenet_denseblock(inputs, num_layers, growth_rate, drop_rate, training=None, **kwargs):
+        features_list = []
+        features_list.append(inputs)
+        x = inputs
+        for _ in range(num_layers):
+            y = Densenet_squeeze.densenet_bottleneck(x, growth_rate=growth_rate, drop_rate=drop_rate, training=training)
+            features_list.append(y)
+            x = tf.concat(features_list, axis=-1)
+        features_list.clear()
+        return x
+
+    @staticmethod
+    def densenet_transitionlayer(inputs, out_channels, training=None, **kwargs):
+        # x = tf.keras.layers.BatchNormalization()(inputs, training=training)
+        x = FRN()(inputs)
+        # x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = DyReLU(out_channels)(x)
+        x = tf.keras.layers.Conv2D(filters=out_channels,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
+        x = Densenet_squeeze.squeeze(x, out_channels)
+        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2),
+                                      strides=2,
+                                      padding="same")(x)
+        return x
+
+    @staticmethod
+    def Densenet(x, num_init_features, growth_rate, block_layers, compression_rate, drop_rate, training=None,
+                 mask=None):
+        x = tf.keras.layers.Conv2D(filters=num_init_features,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
+        x = FRN()(x)
+        x = DyReLU(num_init_features)(x)
+        # x = tf.keras.layers.Activation('Mish_Activation')(x)
+        # x = tf.nn.swish(x)
+        x = Densenet_squeeze.squeeze(x, num_init_features)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2,
+                                      padding="same")(x)
+        num_channels = num_init_features
+        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[0], growth_rate=growth_rate,
+                                                 drop_rate=drop_rate)
+        num_channels += growth_rate * block_layers[0]
+
+        num_channels = compression_rate * num_channels
+        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
+        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[1], growth_rate=growth_rate,
+                                                 drop_rate=drop_rate)
+        num_channels += growth_rate * block_layers[1]
+        num_channels = compression_rate * num_channels
+        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
+        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[2], growth_rate=growth_rate,
+                                                 drop_rate=drop_rate)
+        num_channels += growth_rate * block_layers[2]
+        num_channels = compression_rate * num_channels
+        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
+        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[3], growth_rate=growth_rate,
+                                                 drop_rate=drop_rate)
         return x
 
 
@@ -5622,7 +6603,6 @@ class MobileNetv3_small_squeeze(object):
     def squeeze(inputs):
         # 注意力机制单元
         input_channels = int(inputs.shape[-1])
-
         x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
         x = tf.keras.layers.Dense(int(input_channels / 4))(x)
         x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
@@ -5775,8 +6755,8 @@ class Mobilenet_se(object):
                                    strides=1,
                                    padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
         x = SEResNet.seblock(inputs=x, input_channels=exp_size)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
         if NL == 'HS':
             x = Mobilenet.h_swish(x)
         elif NL == 'RE':
@@ -5784,8 +6764,8 @@ class Mobilenet_se(object):
         x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
                                             strides=s,
                                             padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
         if NL == 'HS':
             x = Mobilenet.h_swish(x)
         elif NL == 'RE':
@@ -5797,8 +6777,8 @@ class Mobilenet_se(object):
                                    strides=1,
                                    padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
         x = SEResNet.seblock(inputs=x, input_channels=out_size)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
         x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
         if s == 1 and in_size == out_size:
             x = tf.keras.layers.add([x, inputs])
@@ -6034,19 +7014,22 @@ class Mobilenet_tpu(object):
                                    strides=1,
                                    padding="same")(inputs)
         x = SEResNet.seblock(inputs=x, input_channels=input_channels * expansion_factor)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         x = tf.nn.relu6(x)
         x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
                                             strides=stride,
                                             padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         x = tf.nn.relu6(x)
         x = tf.keras.layers.Conv2D(filters=output_channels,
                                    kernel_size=(1, 1),
                                    strides=1,
                                    padding="same")(x)
         x = SEResNet.seblock(inputs=x, input_channels=output_channels)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
         if stride == 1 and input_channels == output_channels:
             x = tf.keras.layers.concatenate([x, inputs])
@@ -6091,7 +7074,8 @@ class Mobilenet_tpu(object):
                                    strides=1,
                                    padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
         x = SEResNet.seblock(inputs=x, input_channels=exp_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         if NL == 'HS':
             x = Mobilenet.h_swish(x)
         elif NL == 'RE':
@@ -6099,7 +7083,8 @@ class Mobilenet_tpu(object):
         x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
                                             strides=s,
                                             padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         if NL == 'HS':
             x = Mobilenet.h_swish(x)
         elif NL == 'RE':
@@ -6111,7 +7096,8 @@ class Mobilenet_tpu(object):
                                    strides=1,
                                    padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
         x = SEResNet.seblock(inputs=x, input_channels=out_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
         x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
         if s == 1 and in_size == out_size:
             x = tf.keras.layers.add([x, inputs])
@@ -6299,18 +7285,18 @@ class Mobilenet_tpu(object):
         x = SEResNet.seblock(inputs=x, input_channels=16)
         # x = tf.keras.layers.BatchNormalization()(x, training=training)
         x = FRN()(x)
-        x = Mobilenet_se.h_swish(x)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.h_swish(x)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
+        x = Mobilenet_tpu.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
         x = tf.keras.layers.Conv2D(filters=576,
                                    kernel_size=(1, 1),
                                    strides=1,
@@ -6341,86 +7327,219 @@ class Mobilenet_tpu(object):
         return x
 
 
-class ResNext_squeeze(object):
-    @staticmethod
-    def squeeze(inputs):
-        # 注意力机制单元
-        input_channels = int(inputs.shape[-1])
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
-        x = tf.keras.layers.Dense(input_channels)(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
-        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
-        x = tf.keras.layers.Multiply()([inputs, x])
-        return x
+# object_detection
+class GhostNet_det(object):
 
     @staticmethod
-    def ResNeXt_BottleNeck(inputs, filters, strides, groups, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=filters,
+    def ghostnet(x):
+        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x1 = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
+        x2 = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x1)
+        x2 = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x2)
+        x3 = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x2)
+        x3 = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x3)
+        x4 = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x3)
+        x4 = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x4)
+        x4 = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x4)
+        x4 = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x4)
+        x4 = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x4)
+        x4 = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x4)
+        x5 = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x4)
+        x5 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x5)
+        x5 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x5)
+        x5 = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x5)
+        x5 = GBNeck(dwkernel=5, strides=1, exp=960, out=320, ratio=2, use_se=True)(x5)
+        x1 = tf.keras.layers.Activation('relu')(x1)
+        x2 = tf.keras.layers.Activation('relu')(x2)
+        x3 = tf.keras.layers.Activation('relu')(x3)
+        x4 = tf.keras.layers.Activation('relu')(x4)
+        x5 = tf.keras.layers.Activation('relu')(x5)
+        x1 = tf.keras.layers.BatchNormalization()(x1)
+        x2 = tf.keras.layers.BatchNormalization()(x2)
+        x3 = tf.keras.layers.BatchNormalization()(x3)
+        x4 = tf.keras.layers.BatchNormalization()(x4)
+        x5 = tf.keras.layers.BatchNormalization()(x5)
+        return x1, x2, x3, x4, x5
+
+    @staticmethod
+    def ghostdet(x):
+        x1, x2, x3, x4, x5 = x
+        x1 = GBNeck(dwkernel=5, strides=1, exp=72, out=64, ratio=2, use_se=True)(x1)
+        x2 = GBNeck(dwkernel=5, strides=1, exp=72, out=64, ratio=2, use_se=True)(x2)
+        x3 = GBNeck(dwkernel=5, strides=1, exp=72, out=64, ratio=2, use_se=True)(x3)
+        x4 = GBNeck(dwkernel=5, strides=1, exp=72, out=64, ratio=2, use_se=True)(x4)
+        x5 = GBNeck(dwkernel=5, strides=1, exp=72, out=64, ratio=2, use_se=True)(x5)
+        x1 = tf.keras.layers.BatchNormalization()(x1)
+        x2 = tf.keras.layers.BatchNormalization()(x2)
+        x3 = tf.keras.layers.BatchNormalization()(x3)
+        x4 = tf.keras.layers.BatchNormalization()(x4)
+        x5 = tf.keras.layers.BatchNormalization()(x5)
+        return x1, x2, x3, x4, x5
+
+
+class Mobilenet_det(object):
+    @staticmethod
+    def bottleneck(inputs, input_channels, output_channels, expansion_factor, stride, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=input_channels * expansion_factor,
                                    kernel_size=(1, 1),
                                    strides=1,
                                    padding="same")(inputs)
+        x = SEResNet.seblock(inputs=x, input_channels=input_channels * expansion_factor)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=(3, 3),
-                                   strides=strides,
-                                   padding="same", )(x)
+        x = tf.nn.relu6(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
+                                            strides=stride,
+                                            padding="same")(x)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = ResNext_squeeze.squeeze(x)
-        x = tf.keras.layers.Conv2D(filters=2 * filters,
+        x = tf.nn.relu6(x)
+        x = tf.keras.layers.Conv2D(filters=output_channels,
                                    kernel_size=(1, 1),
                                    strides=1,
                                    padding="same")(x)
+        x = SEResNet.seblock(inputs=x, input_channels=output_channels)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        shortcut = tf.keras.layers.Conv2D(filters=2 * filters,
-                                          kernel_size=(1, 1),
-                                          strides=strides,
-                                          padding="same")(inputs)
-        shortcut = tf.keras.layers.BatchNormalization()(shortcut, training=training)
-        output = tf.nn.swish(tf.keras.layers.add([x, shortcut]))
+        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
+        if stride == 1 and input_channels == output_channels:
+            x = tf.keras.layers.concatenate([x, inputs])
+        return x
+
+    @staticmethod
+    def build_bottleneck(inputs, t, in_channel_num, out_channel_num, n, s):
+        bottleneck = inputs
+        for i in range(n):
+            if i == 0:
+                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=in_channel_num,
+                                                     output_channels=out_channel_num,
+                                                     expansion_factor=t,
+                                                     stride=s)
+            else:
+                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=out_channel_num,
+                                                     output_channels=out_channel_num,
+                                                     expansion_factor=t,
+                                                     stride=1)
+        return bottleneck
+
+    @staticmethod
+    def h_sigmoid(x):
+        return tf.nn.relu6(x + 3) / 6
+
+    @staticmethod
+    def seblock(inputs, input_channels, r=16, **kwargs):
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.keras.layers.Dense(units=input_channels // r)(x)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Dense(units=input_channels)(x)
+        x = Mobilenet.h_sigmoid(x)
+        x = tf.expand_dims(x, axis=1)
+        x = tf.expand_dims(x, axis=1)
+        output = inputs * x
         return output
 
     @staticmethod
-    def build_ResNeXt_block(inputs, filters, strides, groups, repeat_num):
-        block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                           strides=strides,
-                                           groups=groups)
-        for _ in range(1, repeat_num):
-            block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                               strides=1,
-                                               groups=groups)
-        return block
+    def BottleNeck(inputs, in_size, exp_size, out_size, s, is_se_existing, NL, k, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=exp_size,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
+        x = SEResNet.seblock(inputs=x, input_channels=exp_size)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
+        if NL == 'HS':
+            x = Mobilenet.h_swish(x)
+        elif NL == 'RE':
+            x = tf.nn.relu6(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
+                                            strides=s,
+                                            padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
+        if NL == 'HS':
+            x = Mobilenet.h_swish(x)
+        elif NL == 'RE':
+            x = tf.nn.relu6(x)
+        if is_se_existing:
+            x = Mobilenet_se.seblock(x, input_channels=exp_size)
+        x = tf.keras.layers.Conv2D(filters=out_size,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
+        x = SEResNet.seblock(inputs=x, input_channels=out_size)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = FRN()(x)
+        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
+        if s == 1 and in_size == out_size:
+            x = tf.keras.layers.add([x, inputs])
+        return x
 
     @staticmethod
-    def Resnext(x, repeat_num_list, cardinality, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
+    def h_swish(x):
+        return x * Mobilenet_se.h_sigmoid(x)
+
+    @staticmethod
+    def MobileNetV3Small(x, training=None, mask=None):
+        x = tf.keras.layers.Conv2D(filters=16,
+                                   kernel_size=(3, 3),
                                    strides=2,
                                    padding="same")(x)
+        x = SEResNet.seblock(inputs=x, input_channels=16)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = ResNeXt.build_ResNeXt_block(x, filters=128,
-                                        strides=1,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[0])
-        x = ResNeXt.build_ResNeXt_block(x, filters=256,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[1])
-        x = ResNeXt.build_ResNeXt_block(x, filters=512,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[2])
-        x = ResNeXt.build_ResNeXt_block(x, filters=1024,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[3])
-        return x
+        x = Mobilenet_det.h_swish(x)
+        x1 = Mobilenet_det.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
+        x2 = Mobilenet_det.BottleNeck(x1, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
+        x2 = Mobilenet_det.BottleNeck(x2, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
+        x3 = Mobilenet_det.BottleNeck(x2, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
+        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
+        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
+        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
+        x3 = Mobilenet_det.BottleNeck(x3, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
+        x4 = Mobilenet_det.BottleNeck(x3, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
+        x4 = Mobilenet_det.BottleNeck(x4, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
+        x4 = Mobilenet_det.BottleNeck(x4, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
+        x = tf.keras.layers.Conv2D(filters=16,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        # x = SEResNet.seblock(inputs=x, input_channels=576)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = Mobilenet.h_swish(x)
+        x1 = tf.keras.layers.Conv2D(filters=24,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x1)
+        x1 = tf.keras.layers.BatchNormalization()(x1, training=training)
+        x1 = Mobilenet.h_swish(x1)
+
+        x2 = tf.keras.layers.Conv2D(filters=40,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x2)
+        x2 = tf.keras.layers.BatchNormalization()(x2, training=training)
+        x2 = Mobilenet.h_swish(x2)
+
+        x3 = tf.keras.layers.Conv2D(filters=112,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x3)
+        x3 = tf.keras.layers.BatchNormalization()(x3, training=training)
+        x3 = Mobilenet.h_swish(x3)
+
+        x4 = tf.keras.layers.Conv2D(filters=320,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x4)
+        x4 = tf.keras.layers.BatchNormalization()(x4, training=training)
+        x4 = Mobilenet.h_swish(x4)
+
+        # x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
+        #                                      strides=1)(x)
+        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x)
+        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x1)
+        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x2)
+        maxpool4 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x3)
+        maxpool5 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x4)
+        return maxpool1, maxpool2, maxpool3, maxpool4, maxpool5
 
 
 # resnext
@@ -6582,6 +7701,88 @@ class ResNeXt(object):
                                    padding="same")(x)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
         x = tf.nn.relu(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2,
+                                      padding="same")(x)
+        x = ResNeXt.build_ResNeXt_block(x, filters=128,
+                                        strides=1,
+                                        groups=cardinality,
+                                        repeat_num=repeat_num_list[0])
+        x = ResNeXt.build_ResNeXt_block(x, filters=256,
+                                        strides=2,
+                                        groups=cardinality,
+                                        repeat_num=repeat_num_list[1])
+        x = ResNeXt.build_ResNeXt_block(x, filters=512,
+                                        strides=2,
+                                        groups=cardinality,
+                                        repeat_num=repeat_num_list[2])
+        x = ResNeXt.build_ResNeXt_block(x, filters=1024,
+                                        strides=2,
+                                        groups=cardinality,
+                                        repeat_num=repeat_num_list[3])
+        return x
+
+
+class ResNext_squeeze(object):
+    @staticmethod
+    def squeeze(inputs):
+        # 注意力机制单元
+        input_channels = int(inputs.shape[-1])
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
+        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
+        x = tf.keras.layers.Dense(input_channels)(x)
+        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
+        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
+        x = tf.keras.layers.Multiply()([inputs, x])
+        return x
+
+    @staticmethod
+    def ResNeXt_BottleNeck(inputs, filters, strides, groups, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=filters,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Conv2D(filters=filters,
+                                   kernel_size=(3, 3),
+                                   strides=strides,
+                                   padding="same", )(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = ResNext_squeeze.squeeze(x)
+        x = tf.keras.layers.Conv2D(filters=2 * filters,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        shortcut = tf.keras.layers.Conv2D(filters=2 * filters,
+                                          kernel_size=(1, 1),
+                                          strides=strides,
+                                          padding="same")(inputs)
+        shortcut = tf.keras.layers.BatchNormalization()(shortcut, training=training)
+        output = tf.nn.swish(tf.keras.layers.add([x, shortcut]))
+        return output
+
+    @staticmethod
+    def build_ResNeXt_block(inputs, filters, strides, groups, repeat_num):
+        block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
+                                           strides=strides,
+                                           groups=groups)
+        for _ in range(1, repeat_num):
+            block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
+                                               strides=1,
+                                               groups=groups)
+        return block
+
+    @staticmethod
+    def Resnext(x, repeat_num_list, cardinality, training=None, mask=None):
+        x = tf.keras.layers.Conv2D(filters=64,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
                                       strides=2,
                                       padding="same")(x)
@@ -7020,748 +8221,59 @@ class CnnHead(object):
         return x
 
 
-class Settings(object):
-    @staticmethod
-    def settings():
-        with open(n_class_file, 'r', encoding='utf-8') as f:
-            n_class = len(json.loads(f.read()))
-        return n_class + 1
+# Efficientdet
+def Efficientdet(width_coefficient, depth_coefficient, default_resolution, dropout_rate=0.2,
+                 drop_connect_rate=0.2,
+                 depth_divisor=8,
+                 blocks_args=DEFAULT_BLOCKS_ARGS, inputs=None):
+    features = []
+    img_input = inputs
 
-    @staticmethod
-    def settings_num_classes():
-        with open(n_class_file, 'r', encoding='utf-8') as f:
-            n_class = len(json.loads(f.read()))
-        return n_class
+    bn_axis = 3
+    activation = Efficientdet_anchors.get_swish()
 
+    x = img_input
+    x = tf.keras.layers.Conv2D(Efficientdet_anchors.round_filters(32, width_coefficient, depth_divisor), 3,
+                               strides=(2, 2),
+                               padding='same',
+                               use_bias=False,
+                               kernel_initializer=CONV_KERNEL_INITIALIZER)(x)
+    x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
+    x = tf.keras.layers.Activation(activation)(x)
 
-class CTCLoss(tf.keras.losses.Loss):
-    def __init__(self, logits_time_major=False, blank_index=-1,
-                 reduction=tf.keras.losses.Reduction.AUTO, name='ctc_loss'):
-        super().__init__(reduction=reduction, name=name)
-        self.logits_time_major = logits_time_major
-        self.blank_index = blank_index
+    num_blocks_total = sum(block_args.num_repeat for block_args in blocks_args)
+    block_num = 0
+    for idx, block_args in enumerate(blocks_args):
+        assert block_args.num_repeat > 0
+        # Update block input and output filters based on depth multiplier.
+        block_args = block_args._replace(
+            input_filters=Efficientdet_anchors.round_filters(block_args.input_filters,
+                                                             width_coefficient, depth_divisor),
+            output_filters=Efficientdet_anchors.round_filters(block_args.output_filters,
+                                                              width_coefficient, depth_divisor),
+            num_repeat=Efficientdet_anchors.round_repeats(block_args.num_repeat, depth_coefficient))
 
-    def call(self, y_true, y_pred):
-        y_true = tf.cast(y_true, tf.int32)
-        logit_length = tf.fill([tf.shape(y_pred)[0]], tf.shape(y_pred)[1])
-        loss = tf.nn.ctc_loss(
-            labels=y_true,
-            logits=y_pred,
-            label_length=None,
-            logit_length=logit_length,
-            logits_time_major=self.logits_time_major,
-            blank_index=self.blank_index
-        )
-        return tf.reduce_mean(loss)
-
-
-class WordAccuracy(tf.keras.metrics.Metric):
-
-    def __init__(self, name='word_acc', **kwargs):
-        super().__init__(name=name, **kwargs)
-        self.total = self.add_weight(name='total', dtype=tf.int32,
-                                     initializer=tf.zeros_initializer())
-        self.count = self.add_weight(name='count', dtype=tf.int32,
-                                     initializer=tf.zeros_initializer())
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        b = tf.shape(y_true)[0]
-        max_width = tf.maximum(tf.shape(y_true)[1], tf.shape(y_pred)[1])
-        logit_length = tf.fill([tf.shape(y_pred)[0]], tf.shape(y_pred)[1])
-        decoded, _ = tf.nn.ctc_greedy_decoder(
-            inputs=tf.transpose(y_pred, perm=[1, 0, 2]),
-            sequence_length=logit_length)
-        y_true = tf.sparse.reset_shape(y_true, [b, max_width])
-        y_pred = tf.sparse.reset_shape(decoded[0], [b, max_width])
-        y_true = tf.sparse.to_dense(y_true, default_value=-1)
-        y_pred = tf.sparse.to_dense(y_pred, default_value=-1)
-        y_true = tf.cast(y_true, tf.int32)
-        y_pred = tf.cast(y_pred, tf.int32)
-        values = tf.math.reduce_any(tf.math.not_equal(y_true, y_pred), axis=1)
-        values = tf.cast(values, tf.int32)
-        values = tf.reduce_sum(values)
-        self.total.assign_add(b)
-        self.count.assign_add(b - values)
-
-    def result(self):
-        return self.count / self.total
-
-    def reset_states(self):
-        self.count.assign(0)
-        self.total.assign(0)
-
-
-class Efficientdet_anchors(object):
-    @staticmethod
-    def get_swish():
-        def swish(x):
-            return x * tf.keras.backend.sigmoid(x)
-
-        return swish
-
-    @staticmethod
-    def get_dropout():
-        class FixedDropout(tf.keras.layers.Dropout):
-            def _get_noise_shape(self, inputs):
-                if self.noise_shape is None:
-                    return self.noise_shape
-
-                symbolic_shape = tf.keras.backend.shape(inputs)
-                noise_shape = [symbolic_shape[axis] if shape is None else shape
-                               for axis, shape in enumerate(self.noise_shape)]
-                return tuple(noise_shape)
-
-        return FixedDropout
-
-    @staticmethod
-    def round_filters(filters, width_coefficient, depth_divisor):
-        filters *= width_coefficient
-        new_filters = int(filters + depth_divisor / 2) // depth_divisor * depth_divisor
-        new_filters = max(depth_divisor, new_filters)
-        if new_filters < 0.9 * filters:
-            new_filters += depth_divisor
-        return int(new_filters)
-
-    @staticmethod
-    def round_repeats(repeats, depth_coefficient):
-        return int(math.ceil(depth_coefficient * repeats))
-
-    @staticmethod
-    def mb_conv_block(inputs, block_args, activation, drop_rate=None):
-        has_se = (block_args.se_ratio is not None) and (0 < block_args.se_ratio <= 1)
-        bn_axis = 3
-
-        Dropout = Efficientdet_anchors.get_dropout()
-
-        filters = block_args.input_filters * block_args.expand_ratio
-        if block_args.expand_ratio != 1:
-            x = tf.keras.layers.Conv2D(filters, 1,
-                                       padding='same',
-                                       use_bias=False,
-                                       kernel_initializer=CONV_KERNEL_INITIALIZER)(inputs)
-            x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
-            x = tf.keras.layers.Activation(activation)(x)
-        else:
-            x = inputs
-
-        x = tf.keras.layers.DepthwiseConv2D(block_args.kernel_size,
-                                            strides=block_args.strides,
-                                            padding='same',
-                                            use_bias=False,
-                                            depthwise_initializer=CONV_KERNEL_INITIALIZER)(x)
-        x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
-        x = tf.keras.layers.Activation(activation)(x)
-
-        if has_se:
-            num_reduced_filters = max(1, int(
-                block_args.input_filters * block_args.se_ratio
-            ))
-            se_tensor = tf.keras.layers.GlobalAveragePooling2D()(x)
-
-            target_shape = (1, 1, filters) if tf.keras.backend.image_data_format() == 'channels_last' else (
-                filters, 1, 1)
-            se_tensor = tf.keras.layers.Reshape(target_shape)(se_tensor)
-            se_tensor = tf.keras.layers.Conv2D(num_reduced_filters, 1,
+        drop_rate = drop_connect_rate * float(block_num) / num_blocks_total
+        x = Efficientdet_anchors.mb_conv_block(x, block_args,
                                                activation=activation,
-                                               padding='same',
-                                               use_bias=True,
-                                               kernel_initializer=CONV_KERNEL_INITIALIZER)(se_tensor)
-            se_tensor = tf.keras.layers.Conv2D(filters, 1,
-                                               activation='sigmoid',
-                                               padding='same',
-                                               use_bias=True,
-                                               kernel_initializer=CONV_KERNEL_INITIALIZER)(se_tensor)
-            if tf.keras.backend.backend() == 'theano':
-                pattern = ([True, True, True, False] if tf.keras.backend.image_data_format() == 'channels_last'
-                           else [True, False, True, True])
-                se_tensor = tf.keras.layers.Lambda(
-                    lambda x: tf.keras.backend.pattern_broadcast(x, pattern))(se_tensor)
-            x = tf.keras.layers.multiply([x, se_tensor])
+                                               drop_rate=drop_rate)
+        block_num += 1
+        if block_args.num_repeat > 1:
 
-        # Output phase
-        x = tf.keras.layers.Conv2D(block_args.output_filters, 1,
-                                   padding='same',
-                                   use_bias=False,
-                                   kernel_initializer=CONV_KERNEL_INITIALIZER)(x)
-
-        x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
-        if block_args.id_skip and all(
-                s == 1 for s in block_args.strides
-        ) and block_args.input_filters == block_args.output_filters:
-            if drop_rate and (drop_rate > 0):
-                x = Dropout(drop_rate,
-                            noise_shape=(None, 1, 1, 1))(x)
-            x = tf.keras.layers.add([x, inputs])
-
-        return x
-
-    @staticmethod
-    def iou(b1, b2):
-        b1_x1, b1_y1, b1_x2, b1_y2 = b1[0], b1[1], b1[2], b1[3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = b2[:, 0], b2[:, 1], b2[:, 2], b2[:, 3]
-
-        inter_rect_x1 = np.maximum(b1_x1, b2_x1)
-        inter_rect_y1 = np.maximum(b1_y1, b2_y1)
-        inter_rect_x2 = np.minimum(b1_x2, b2_x2)
-        inter_rect_y2 = np.minimum(b1_y2, b2_y2)
-
-        inter_area = np.maximum(inter_rect_x2 - inter_rect_x1, 0) * np.maximum(inter_rect_y2 - inter_rect_y1, 0)
-
-        area_b1 = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
-        area_b2 = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-
-        iou = inter_area / np.maximum((area_b1 + area_b2 - inter_area), 1e-6)
-        return iou
-
-    @staticmethod
-    def generate_anchors(base_size=16, ratios=None, scales=None):
-        if ratios is None:
-            ratios = AnchorParameters.default.ratios
-
-        if scales is None:
-            scales = AnchorParameters.default.scales
-
-        num_anchors = len(ratios) * len(scales)
-
-        anchors = np.zeros((num_anchors, 4))
-
-        anchors[:, 2:] = base_size * np.tile(scales, (2, len(ratios))).T
-
-        areas = anchors[:, 2] * anchors[:, 3]
-
-        anchors[:, 2] = np.sqrt(areas / np.repeat(ratios, len(scales)))
-        anchors[:, 3] = anchors[:, 2] * np.repeat(ratios, len(scales))
-
-        anchors[:, 0::2] -= np.tile(anchors[:, 2] * 0.5, (2, 1)).T
-        anchors[:, 1::2] -= np.tile(anchors[:, 3] * 0.5, (2, 1)).T
-
-        return anchors
-
-    @staticmethod
-    def shift(shape, stride, anchors):
-        shift_x = (np.arange(0, shape[1], dtype=tf.keras.backend.floatx()) + 0.5) * stride
-        shift_y = (np.arange(0, shape[0], dtype=tf.keras.backend.floatx()) + 0.5) * stride
-
-        shift_x, shift_y = np.meshgrid(shift_x, shift_y)
-
-        shift_x = np.reshape(shift_x, [-1])
-        shift_y = np.reshape(shift_y, [-1])
-
-        shifts = np.stack([
-            shift_x,
-            shift_y,
-            shift_x,
-            shift_y
-        ], axis=0)
-
-        shifts = np.transpose(shifts)
-        number_of_anchors = np.shape(anchors)[0]
-
-        k = np.shape(shifts)[0]
-
-        shifted_anchors = np.reshape(anchors, [1, number_of_anchors, 4]) + np.array(np.reshape(shifts, [k, 1, 4]),
-                                                                                    tf.keras.backend.floatx())
-        shifted_anchors = np.reshape(shifted_anchors, [k * number_of_anchors, 4])
-
-        return shifted_anchors
-
-    @staticmethod
-    def get_anchors(image_size):
-        border = image_size
-        features = [image_size / 8, image_size / 16, image_size / 32, image_size / 64, image_size / 128]
-        shapes = []
-        for feature in features:
-            shapes.append(feature)
-        all_anchors = []
-        for i in range(5):
-            anchors = Efficientdet_anchors.generate_anchors(AnchorParameters.default.sizes[i])
-            shifted_anchors = Efficientdet_anchors.shift([shapes[i], shapes[i]], AnchorParameters.default.strides[i],
-                                                         anchors)
-            all_anchors.append(shifted_anchors)
-
-        all_anchors = np.concatenate(all_anchors, axis=0)
-        all_anchors = all_anchors / border
-        return all_anchors
-
-    @staticmethod
-    def SeparableConvBlock(num_channels, kernel_size, strides):
-        f1 = tf.keras.layers.SeparableConv2D(num_channels, kernel_size=kernel_size, strides=strides, padding='same',
-                                             use_bias=True)
-        f2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)
-        return reduce(lambda f, g: lambda *args, **kwargs: g(f(*args, **kwargs)), (f1, f2))
-
-    @staticmethod
-    def build_wBiFPN(features, num_channels, id):
-        if id == 0:
-            _, _, C3, C4, C5 = features
-            # 第一次BIFPN需要 下采样 与 降通道 获得 p3_in p4_in p5_in p6_in p7_in
-            # -----------------------------下采样 与 降通道----------------------------#
-            P3_in = C3
-            P3_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P3_in)
-            P3_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P3_in)
-
-            P4_in = C4
-            P4_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
-            P4_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_1)
-            P4_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
-            P4_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_2)
-
-            P5_in = C5
-            P5_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
-            P5_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_1)
-            P5_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
-            P5_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_2)
-
-            P6_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(C5)
-            P6_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P6_in)
-            P6_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
-
-            P7_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
-            # -------------------------------------------------------------------------#
-
-            # --------------------------构建BIFPN的上下采样循环-------------------------#
-            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
-            P6_td = wBiFPNAdd()([P6_in, P7_U])
-            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
-            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
-
-            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
-            P5_td = wBiFPNAdd()([P5_in_1, P6_U])
-            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
-            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
-
-            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
-            P4_td = wBiFPNAdd()([P4_in_1, P5_U])
-            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
-            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
-
-            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
-            P3_out = wBiFPNAdd()([P3_in, P4_U])
-            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
-            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P3_out)
-
-            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
-            P4_out = wBiFPNAdd()([P4_in_2, P4_td, P3_D])
-            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
-            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P4_out)
-
-            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
-            P5_out = wBiFPNAdd()([P5_in_2, P5_td, P4_D])
-            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
-            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P5_out)
-
-            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
-            P6_out = wBiFPNAdd()([P6_in, P6_td, P5_D])
-            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
-            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P6_out)
-
-            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
-            P7_out = wBiFPNAdd()([P7_in, P6_D])
-            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
-            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P7_out)
-
-        else:
-            P3_in, P4_in, P5_in, P6_in, P7_in = features
-            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
-            P6_td = wBiFPNAdd()([P6_in, P7_U])
-            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
-            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
-
-            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
-            P5_td = wBiFPNAdd()([P5_in, P6_U])
-            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
-            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
-
-            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
-            P4_td = wBiFPNAdd()([P4_in, P5_U])
-            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
-            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
-
-            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
-            P3_out = wBiFPNAdd()([P3_in, P4_U])
-            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
-            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P3_out)
-
-            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
-            P4_out = wBiFPNAdd()([P4_in, P4_td, P3_D])
-            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
-            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P4_out)
-
-            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
-            P5_out = wBiFPNAdd()([P5_in, P5_td, P4_D])
-            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
-            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P5_out)
-
-            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
-            P6_out = wBiFPNAdd()([P6_in, P6_td, P5_D])
-            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
-            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P6_out)
-
-            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
-            P7_out = wBiFPNAdd()([P7_in, P6_D])
-            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
-            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P7_out)
-
-        return [P3_out, P4_out, P5_out, P6_out, P7_out]
-
-    @staticmethod
-    def build_BiFPN(features, num_channels, id):
-        if id == 0:
-            # 第一次BIFPN需要 下采样 与 降通道 获得 p3_in p4_in p5_in p6_in p7_in
-            # -----------------------------下采样 与 降通道----------------------------#
-            _, _, C3, C4, C5 = features
-            P3_in = C3
-            P3_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P3_in)
-            P3_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P3_in)
-
-            P4_in = C4
-            P4_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
-            P4_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_1)
-            P4_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P4_in)
-            P4_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P4_in_2)
-
-            P5_in = C5
-            P5_in_1 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
-            P5_in_1 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_1)
-            P5_in_2 = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(P5_in)
-            P5_in_2 = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P5_in_2)
-
-            P6_in = tf.keras.layers.Conv2D(num_channels, kernel_size=1, padding='same')(C5)
-            P6_in = tf.keras.layers.BatchNormalization(momentum=0.99, epsilon=1e-3)(P6_in)
-            P6_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
-
-            P7_in = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_in)
-            # -------------------------------------------------------------------------#
-
-            # --------------------------构建BIFPN的上下采样循环-------------------------#
-            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
-            P6_td = tf.keras.layers.Add()([P6_in, P7_U])
-            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
-            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
-
-            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
-            P5_td = tf.keras.layers.Add()([P5_in_1, P6_U])
-            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
-            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
-
-            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
-            P4_td = tf.keras.layers.Add()([P4_in_1, P5_U])
-            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
-            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
-
-            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
-            P3_out = tf.keras.layers.Add()([P3_in, P4_U])
-            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
-            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P3_out)
-
-            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
-            P4_out = tf.keras.layers.Add()([P4_in_2, P4_td, P3_D])
-            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
-            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P4_out)
-
-            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
-            P5_out = tf.keras.layers.Add()([P5_in_2, P5_td, P4_D])
-            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
-            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P5_out)
-
-            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
-            P6_out = tf.keras.layers.Add()([P6_in, P6_td, P5_D])
-            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
-            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P6_out)
-
-            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
-            P7_out = tf.keras.layers.Add()([P7_in, P6_D])
-            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
-            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P7_out)
-
-        else:
-            P3_in, P4_in, P5_in, P6_in, P7_in = features
-            P7_U = tf.keras.layers.UpSampling2D()(P7_in)
-            P6_td = tf.keras.layers.Add()([P6_in, P7_U])
-            P6_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_td)
-            P6_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P6_td)
-
-            P6_U = tf.keras.layers.UpSampling2D()(P6_td)
-            P5_td = tf.keras.layers.Add()([P5_in, P6_U])
-            P5_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_td)
-            P5_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P5_td)
-
-            P5_U = tf.keras.layers.UpSampling2D()(P5_td)
-            P4_td = tf.keras.layers.Add()([P4_in, P5_U])
-            P4_td = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_td)
-            P4_td = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(P4_td)
-
-            P4_U = tf.keras.layers.UpSampling2D()(P4_td)
-            P3_out = tf.keras.layers.Add()([P3_in, P4_U])
-            P3_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P3_out)
-            P3_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P3_out)
-
-            P3_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P3_out)
-            P4_out = tf.keras.layers.Add()([P4_in, P4_td, P3_D])
-            P4_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P4_out)
-            P4_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P4_out)
-
-            P4_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P4_out)
-            P5_out = tf.keras.layers.Add()([P5_in, P5_td, P4_D])
-            P5_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P5_out)
-            P5_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P5_out)
-
-            P5_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P5_out)
-            P6_out = tf.keras.layers.Add()([P6_in, P6_td, P5_D])
-            P6_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P6_out)
-            P6_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P6_out)
-
-            P6_D = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(P6_out)
-            P7_out = tf.keras.layers.Add()([P7_in, P6_D])
-            P7_out = tf.keras.layers.Activation(lambda x: tf.nn.swish(x))(P7_out)
-            P7_out = Efficientdet_anchors.SeparableConvBlock(num_channels=num_channels, kernel_size=3, strides=1)(
-                P7_out)
-        return [P3_out, P4_out, P5_out, P6_out, P7_out]
-
-
-class Efficientdet_model(object):
-
-    def __init__(self, phi, num_classes=20, num_anchors=9):
-        self.phi = phi
-        self.num_classes = num_classes
-        self.num_anchors = num_anchors
-
-    # assert phi in range(8)
-    def EfficientNet(self, width_coefficient, depth_coefficient, default_resolution, dropout_rate=0.2,
-                     drop_connect_rate=0.2,
-                     depth_divisor=8,
-                     blocks_args=DEFAULT_BLOCKS_ARGS, input_tensor=None, input_shape=None, **kwargs):
-        features = []
-
-        if input_tensor is None:
-            img_input = tf.keras.layers.Input(shape=input_shape)
-        else:
-            img_input = input_tensor
-
-        bn_axis = 3
-        activation = Efficientdet_anchors.get_swish()
-
-        x = img_input
-        x = tf.keras.layers.Conv2D(Efficientdet_anchors.round_filters(32, width_coefficient, depth_divisor), 3,
-                                   strides=(2, 2),
-                                   padding='same',
-                                   use_bias=False,
-                                   kernel_initializer=CONV_KERNEL_INITIALIZER)(x)
-        x = tf.keras.layers.BatchNormalization(axis=bn_axis)(x)
-        x = tf.keras.layers.Activation(activation)(x)
-
-        num_blocks_total = sum(block_args.num_repeat for block_args in blocks_args)
-        block_num = 0
-        for idx, block_args in enumerate(blocks_args):
-            assert block_args.num_repeat > 0
-            # Update block input and output filters based on depth multiplier.
             block_args = block_args._replace(
-                input_filters=Efficientdet_anchors.round_filters(block_args.input_filters,
-                                                                 width_coefficient, depth_divisor),
-                output_filters=Efficientdet_anchors.round_filters(block_args.output_filters,
-                                                                  width_coefficient, depth_divisor),
-                num_repeat=Efficientdet_anchors.round_repeats(block_args.num_repeat, depth_coefficient))
+                input_filters=block_args.output_filters, strides=[1, 1])
 
-            drop_rate = drop_connect_rate * float(block_num) / num_blocks_total
-            x = Efficientdet_anchors.mb_conv_block(x, block_args,
-                                                   activation=activation,
-                                                   drop_rate=drop_rate)
-            block_num += 1
-            if block_args.num_repeat > 1:
-
-                block_args = block_args._replace(
-                    input_filters=block_args.output_filters, strides=[1, 1])
-
-                for bidx in xrange(block_args.num_repeat - 1):
-                    drop_rate = drop_connect_rate * float(block_num) / num_blocks_total
-                    x = Efficientdet_anchors.mb_conv_block(x, block_args,
-                                                           activation=activation,
-                                                           drop_rate=drop_rate)
-                    block_num += 1
-            if idx < len(blocks_args) - 1 and blocks_args[idx + 1].strides[0] == 2:
-                features.append(x)
-            elif idx == len(blocks_args) - 1:
-                features.append(x)
-        return features
-
-    def EfficientNetB0(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.0, 1.0, 224, 0.2, model_name='efficientnet-b0', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB1(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.0, 1.0, 240, 0.2, model_name='efficientnet-b1', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB2(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.1, 1.2, 260, 0.3, model_name='efficientnet-b2', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB3(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.2, 1.4, 300, 0.3, model_name='efficientnet-b3', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB4(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.4, 1.8, 380, 0.4, model_name='efficientnet-b4', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB5(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.6, 2.2, 456, 0.4, model_name='efficientnet-b5', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB6(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(1.8, 2.6, 528, 0.5, model_name='efficientnet-b6', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def EfficientNetB7(self, input_tensor=None, input_shape=None):
-        return self.EfficientNet(2.0, 3.1, 600, 0.5, model_name='efficientnet-b7', input_tensor=input_tensor,
-                                 input_shape=input_shape)
-
-    def get_model(self):
-        fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
-        fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
-        box_class_repeats = [3, 3, 3, 4, 4, 4, 5, 5]
-        backbones = [self.EfficientNetB0, self.EfficientNetB1,
-                     self.EfficientNetB2,
-                     self.EfficientNetB3, self.EfficientNetB4,
-                     self.EfficientNetB5,
-                     self.EfficientNetB6, self.EfficientNetB7]
-
-        input_size = IMAGE_SIZES[self.phi]
-        input_shape = (input_size, input_size, 3)
-        image_input = tf.keras.layers.Input(input_shape)
-
-        features = backbones[self.phi](input_tensor=image_input)
-        fpn_features = features
-        if self.phi < 6:
-            for i in range(fpn_cell_repeats[self.phi]):
-                fpn_features = Efficientdet_anchors.build_wBiFPN(fpn_features, fpn_num_filters[self.phi], i)
-        else:
-
-            for i in range(fpn_cell_repeats[self.phi]):
-                fpn_features = Efficientdet_anchors.build_BiFPN(fpn_features, fpn_num_filters[self.phi], i)
-
-        box_net = BoxNet(fpn_num_filters[self.phi], box_class_repeats[self.phi],
-                         num_anchors=self.num_anchors, name='box_net')
-        class_net = ClassNet(fpn_num_filters[self.phi], box_class_repeats[self.phi],
-                             num_classes=self.num_classes, num_anchors=self.num_anchors,
-                             name='class_net')
-
-        classification = [class_net.call([feature, i]) for i, feature in enumerate(fpn_features)]
-        classification = tf.keras.layers.Concatenate(axis=1, name='classification')(classification)
-        regression = [box_net.call([feature, i]) for i, feature in enumerate(fpn_features)]
-        regression = tf.keras.layers.Concatenate(axis=1, name='regression')(regression)
-
-        model = tf.keras.models.Model(inputs=[image_input], outputs=[regression, classification], name='efficientdet')
-
-        return model
-
-
-class Efficientdet_Loss(object):
-    @staticmethod
-    def focal(alpha=0.25, gamma=2.0):
-        def _focal(y_true, y_pred):
-            # y_true [batch_size, num_anchor, num_classes+1]
-            # y_pred [batch_size, num_anchor, num_classes]
-            labels = y_true[:, :, :-1]
-            anchor_state = y_true[:, :, -1]  # -1 是需要忽略的, 0 是背景, 1 是存在目标
-            classification = y_pred
-
-            # 找出存在目标的先验框
-            indices_for_object = tf.where(tf.keras.backend.equal(anchor_state, 1))
-            labels_for_object = tf.gather_nd(labels, indices_for_object)
-            classification_for_object = tf.gather_nd(classification, indices_for_object)
-
-            # 计算每一个先验框应该有的权重
-            alpha_factor_for_object = tf.keras.backend.ones_like(labels_for_object) * alpha
-            alpha_factor_for_object = tf.where(tf.keras.backend.equal(labels_for_object, 1), alpha_factor_for_object,
-                                               1 - alpha_factor_for_object)
-            focal_weight_for_object = tf.where(tf.keras.backend.equal(labels_for_object, 1),
-                                               1 - classification_for_object, classification_for_object)
-            focal_weight_for_object = alpha_factor_for_object * focal_weight_for_object ** gamma
-
-            # 将权重乘上所求得的交叉熵
-            cls_loss_for_object = focal_weight_for_object * tf.keras.backend.binary_crossentropy(labels_for_object,
-                                                                                                 classification_for_object)
-
-            # 找出实际上为背景的先验框
-            indices_for_back = tf.where(tf.keras.backend.equal(anchor_state, 0))
-            labels_for_back = tf.gather_nd(labels, indices_for_back)
-            classification_for_back = tf.gather_nd(classification, indices_for_back)
-
-            # 计算每一个先验框应该有的权重
-            alpha_factor_for_back = tf.keras.backend.ones_like(labels_for_back) * (1 - alpha)
-            focal_weight_for_back = classification_for_back
-            focal_weight_for_back = alpha_factor_for_back * focal_weight_for_back ** gamma
-
-            # 将权重乘上所求得的交叉熵
-            cls_loss_for_back = focal_weight_for_back * tf.keras.backend.binary_crossentropy(labels_for_back,
-                                                                                             classification_for_back)
-
-            # 标准化，实际上是正样本的数量
-            normalizer = tf.where(tf.keras.backend.equal(anchor_state, 1))
-            normalizer = tf.keras.backend.cast(tf.keras.backend.shape(normalizer)[0], tf.keras.backend.floatx())
-            normalizer = tf.keras.backend.maximum(tf.keras.backend.cast_to_floatx(1.0), normalizer)
-
-            # 将所获得的loss除上正样本的数量
-            cls_loss_for_object = tf.keras.backend.sum(cls_loss_for_object)
-            cls_loss_for_back = tf.keras.backend.sum(cls_loss_for_back)
-
-            # 总的loss
-            loss = (cls_loss_for_object + cls_loss_for_back) / normalizer
-
-            return loss
-
-        return _focal
-
-    @staticmethod
-    def smooth_l1(sigma=3.0):
-        sigma_squared = sigma ** 2
-
-        def _smooth_l1(y_true, y_pred):
-            regression = y_pred
-            regression_target = y_true[:, :, :-1]
-            anchor_state = y_true[:, :, -1]
-
-            indices = tf.where(tf.keras.backend.equal(anchor_state, 1))
-            regression = tf.gather_nd(regression, indices)
-            regression_target = tf.gather_nd(regression_target, indices)
-
-            # compute smooth L1 loss
-            # f(x) = 0.5 * (sigma * x)^2          if |x| < 1 / sigma / sigma
-            #        |x| - 0.5 / sigma / sigma    otherwise
-            regression_diff = regression - regression_target
-            regression_diff = tf.keras.backend.abs(regression_diff)
-            regression_loss = tf.where(
-                tf.keras.backend.less(regression_diff, 1.0 / sigma_squared),
-                0.5 * sigma_squared * tf.keras.backend.pow(regression_diff, 2),
-                regression_diff - 0.5 / sigma_squared
-            )
-
-            # compute the normalizer: the number of positive anchors
-            normalizer = tf.keras.backend.maximum(1, tf.keras.backend.shape(indices)[0])
-            normalizer = tf.keras.backend.cast(normalizer, dtype=tf.keras.backend.floatx())
-            return tf.keras.backend.sum(regression_loss) / normalizer / 4
-
-        return _smooth_l1
+            for bidx in xrange(block_args.num_repeat - 1):
+                drop_rate = drop_connect_rate * float(block_num) / num_blocks_total
+                x = Efficientdet_anchors.mb_conv_block(x, block_args,
+                                                       activation=activation,
+                                                       drop_rate=drop_rate)
+                block_num += 1
+        if idx < len(blocks_args) - 1 and blocks_args[idx + 1].strides[0] == 2:
+            features.append(x)
+        elif idx == len(blocks_args) - 1:
+            features.append(x)
+    return features
 
 
 class Models(object):
@@ -7770,7 +8282,6 @@ class Models(object):
         anchors = YOLO_anchors.get_anchors()
         model_body = Yolo_tiny_model.yolo_body(tf.keras.layers.Input(shape=(None, None, 3)), len(anchors) // 2,
                                                Settings.settings_num_classes())
-
         weights_path = os.path.join(weight, 'yolov4_tiny_weights_voc.h5')
         if os.path.exists(weights_path):
             model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
@@ -7827,7 +8338,46 @@ class Models(object):
 
     @staticmethod
     def captcha_model_efficientdet():
-        model = Efficientdet_model(PHI, num_classes=Settings.settings_num_classes()).get_model()
+        input_size = IMAGE_SIZES[PHI]
+        input_shape = (input_size, input_size, 3)
+        inputs = tf.keras.layers.Input(input_shape)
+
+        fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
+        fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
+        box_class_repeats = [3, 3, 3, 4, 4, 4, 5, 5]
+        backbones = [(1.0, 1.0, 224, 0.2, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.0, 1.0, 240, 0.2, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.1, 1.2, 260, 0.3, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.2, 1.4, 300, 0.3, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.4, 1.8, 380, 0.4, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.6, 2.2, 456, 0.4, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (1.8, 2.6, 528, 0.5, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs),
+                     (2.0, 3.1, 600, 0.5, 0.2, 8, DEFAULT_BLOCKS_ARGS, inputs)]
+
+        x = Efficientdet(*backbones[PHI])
+        # x = GhostNet_det.ghostnet(inputs)
+
+        if PHI < 6:
+            for i in range(fpn_cell_repeats[PHI]):
+                x = Efficientdet_anchors.build_wBiFPN(x, fpn_num_filters[PHI], i)
+        else:
+
+            for i in range(fpn_cell_repeats[PHI]):
+                x = Efficientdet_anchors.build_BiFPN(x, fpn_num_filters[PHI], i)
+
+        # x = GhostNet_det.ghostdet(x)
+
+        box_net = BoxNet(fpn_num_filters[PHI], box_class_repeats[PHI],
+                         num_anchors=9, name='box_net')
+        class_net = ClassNet(fpn_num_filters[PHI], box_class_repeats[PHI], num_classes=Settings.settings_num_classes(),
+                             num_anchors=9, name='class_net')
+        classification = [class_net.call([feature, i]) for i, feature in enumerate(x)]
+        classification = tf.keras.layers.Concatenate(axis=1, name='classification')(classification)
+        regression = [box_net.call([feature, i]) for i, feature in enumerate(x)]
+        regression = tf.keras.layers.Concatenate(axis=1, name='regression')(regression)
+
+        model = tf.keras.models.Model(inputs=[inputs], outputs=[regression, classification], name='efficientdet')
+
         weights_path = os.path.join(weight, 'efficientdet-d0-voc.h5')
         if os.path.exists(weights_path):
             model.load_weights(weights_path, by_name=True, skip_mismatch=True)
@@ -7864,7 +8414,11 @@ class Models(object):
         # x = Mobilenet_se.MobileNetV3Small(inputs)
         # x = Mobilenet_tpu.MobileNetV3Small(inputs)
         # x = RES32_DETR.res32_detr(inputs)
-        x = ResNest.resnest(inputs)
+        # x = ResNest.resnest(inputs)
+        # x = GhostNet.ghostnet(inputs)
+        x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
+                                      compression_rate=0.5,
+                                      drop_rate=0.5)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -7957,7 +8511,9 @@ class Models(object):
 # x = CBAM_ResNet.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
 # x = ResNext_squeeze.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
 # x = RES32_DETR.res32_detr(inputs)
-
+# x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
+#                               compression_rate=0.5,
+#                               drop_rate=0.5)
 # Efficient_net_b0
 # x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
 # Efficient_net_b1
@@ -8022,19 +8578,25 @@ class Models(object):
 # MnasNet
 # x = MnasNet.MnasNet(inputs)
 
+# GhostNet
+# x = GhostNet.ghostnet(inputs)
+
 # DIY
 # x = MobileNetv3_small_squeeze.MobileNetv3_small(inputs)
 # x = Mobilenet_tpu.MobileNetV3Small(inputs)
 # x = Mobilenet_se.MobileNetV3Small(inputs)
 
+## object_detection(目标检测)
+# x = Mobilenet_det.MobileNetV3Small(inputs)
+
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
-        model = Models.captcha_model()
+        model = Models.captcha_model_num_classes()
         model.summary()
         for i, n in enumerate(model.layers):
             logger.debug(f'{{i}} {{n.name}}')
-        # model._layers = [layer for layer in model.layers if not isinstance(layer, dict)]
-        # plot_model(model, show_shapes=True, dpi=48)
+        model._layers = [layer for layer in model.layers if not isinstance(layer, dict)]
+        tf.keras.utils.plot_model(model, show_shapes=True, dpi=48, to_file='model.png')
 
 """
 
@@ -8100,13 +8662,16 @@ with ThreadPoolExecutor(max_workers=3) as t:
 def save_model(work_path, project_name):
     return f"""import os
 import operator
+import tensorflow as tf
 from loguru import logger
 from {work_path}.{project_name}.models import Models
 from {work_path}.{project_name}.callback import CallBack
 from {work_path}.{project_name}.settings import MODEL
+from {work_path}.{project_name}.settings import PRUNING
 from {work_path}.{project_name}.settings import MODEL_NAME
 from {work_path}.{project_name}.settings import model_path
 from {work_path}.{project_name}.settings import checkpoint_path
+from {work_path}.{project_name}.settings import PRUNING_MODEL_NAME
 
 model = operator.methodcaller(MODEL)(Models)
 try:
@@ -8115,9 +8680,20 @@ try:
     model.load_weights(os.path.join(checkpoint_path, weight))
 except:
     raise OSError(f'没有任何的权重和模型在{{model_path}}')
-model_path = os.path.join(model_path, MODEL_NAME)
-model.save(model_path)
-logger.success(f'{{model_path}}模型保存成功')
+weight_path = os.path.join(model_path, MODEL_NAME)
+model.save(weight_path)
+logger.success(f'{{weight_path}}模型保存成功')
+
+if PRUNING:
+    logger.debug('开始进行模型压缩')
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    quantized_and_pruned_tflite_model = converter.convert()
+    quantized_and_pruned_tflite_file = os.path.join(model_path, PRUNING_MODEL_NAME)
+    with open(quantized_and_pruned_tflite_file, 'wb') as f:
+        f.write(quantized_and_pruned_tflite_model)
+    logger.success(f'{{quantized_and_pruned_tflite_file}}模型保存成功')
+
 """
 
 
@@ -8195,6 +8771,9 @@ IMAGE_SIZES = [512, 640, 768, 896, 1024, 1280, 1408, 1536]
 ## 模型设置
 # 定义模型的方法,模型在models.py定义
 
+# 是否压缩模型
+PRUNING = False
+
 if MODE == 'ORDINARY':
     MODEL = 'captcha_model'
 elif MODE == 'NUM_CLASSES':
@@ -8212,6 +8791,9 @@ elif MODE == 'EFFICIENTDET':
 
 # 保存的模型名称
 MODEL_NAME = 'captcha.h5'
+
+# 压缩后的模型名称
+PRUNING_MODEL_NAME = 'captcha.tflite'
 
 ## 路径设置，一般无需改动
 # 可视化配置batch或epoch
@@ -8332,9 +8914,11 @@ import numpy as np
 import tensorflow as tf
 from loguru import logger
 from {work_path}.{project_name}.settings import USE_GPU
+from {work_path}.{project_name}.settings import PRUNING
 from {work_path}.{project_name}.settings import test_path
 from {work_path}.{project_name}.settings import model_path
 from {work_path}.{project_name}.settings import MODEL_NAME
+from {work_path}.{project_name}.settings import PRUNING_MODEL_NAME
 from {work_path}.{project_name}.utils import running_time
 from {work_path}.{project_name}.utils import Predict_Image
 from {work_path}.{project_name}.utils import Image_Processing
@@ -8370,8 +8954,11 @@ else:
 test_image_list = Image_Processing.extraction_image(test_path)
 number = len(test_image_list)
 random.shuffle(test_image_list)
+if PRUNING:
+    model_path = os.path.join(model_path, PRUNING_MODEL_NAME)
+else:
+    model_path = os.path.join(model_path, MODEL_NAME)
 
-model_path = os.path.join(model_path, MODEL_NAME)
 logger.debug(f'加载模型{{model_path}}')
 if not os.path.exists(model_path):
     raise OSError(f'{{model_path}}没有模型')
