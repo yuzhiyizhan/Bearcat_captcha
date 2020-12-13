@@ -9,7 +9,7 @@ pandas
 captcha
 pydot-ng
 graphviz
-opencv-python
 tensorflow_addons
+opencv-python
 adabelief_tf
 einops

@@ -2732,6 +2732,7 @@ def models(work_path, project_name):
 import glob
 import math
 import json
+import random
 import collections
 import numpy as np
 import tensorflow as tf
@@ -2739,6 +2740,7 @@ from loguru import logger
 from functools import wraps
 from six.moves import xrange
 from functools import reduce
+import tensorflow_addons as tfa
 import xml.etree.ElementTree as ET
 from tensorflow.keras import backend as K
 from adabelief_tf import AdaBeliefOptimizer
@@ -3286,6 +3288,10 @@ class DyReLU(tf.keras.layers.Layer):
         # HxWxBxCx2 -> BxCxHxW
         result = tf.transpose(tf.reduce_max(output, axis=-1), [2, 3, 0, 1])
         return result
+
+    def get_config(self):
+        config = super(DyReLU, self).get_config()
+        return config
 
 
 class DropBlock(tf.keras.layers.Layer):
@@ -5595,6 +5601,136 @@ class ResNest(object):
         return x
 
 
+# RegNet
+class RegNet(object):
+
+    @staticmethod
+    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
+
+        filters = input_tensor.get_shape().as_list()[channel_axis]
+        if input_type == '2d':
+            se_shape = (1, 1, filters)
+            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
+        elif input_type == '1d':
+            se_shape = (1, filters)
+            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
+        else:
+            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
+        se = tf.keras.layers.Reshape(se_shape)(se)
+        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
+            se)
+        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
+        x = tf.keras.layers.Multiply()([input_tensor, se])
+        return x
+
+    @staticmethod
+    def _make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
+        x = input_tensor
+        if SEstyle_atten == 'SE':
+            x = RegNet._squeeze_excite_block(x, input_type=input_type)
+        return x
+
+    @staticmethod
+    def _make_dropout(input_tensor, dropout_range=[0.2, 0.4]):
+        x = input_tensor
+        rate = random.uniform(dropout_range[0], dropout_range[1])
+        random_seed = random.randint(0, 5000)
+        x = tf.keras.layers.Dropout(rate, noise_shape=None, seed=random_seed)(x)
+        return x
+
+    @staticmethod
+    def _make_stem(input_tensor, filters=32, size=(7, 7), strides=2, channel_axis=-1,
+                   active='relu'):
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=size, strides=strides,
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        return x
+
+    @staticmethod
+    def _make_basic_131_block(input_tensor,
+                              filters=96,
+                              group_kernel_size=[3, 3, 3],
+                              filters_per_group=48,
+                              stridess=[1, 2, 1], channel_axis=-1, active='relu'):
+
+        x2 = tf.identity(input_tensor)
+        if 2 in stridess:
+            x2 = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1),
+                                        strides=2,
+                                        padding='same',
+                                        kernel_initializer='he_normal',
+                                        use_bias=False,
+                                        data_format='channels_last')(x2)
+            x2 = tf.keras.layers.BatchNormalization(axis=channel_axis)(x2)
+            x2 = tf.keras.layers.Activation(active)(x2)
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[0],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        x = GroupedConv2D(filters=filters, kernel_size=group_kernel_size, strides=stridess[1],
+                          use_keras=True, padding='same', kernel_initializer='he_normal',
+                          use_bias=False, data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[2],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        x = RegNet._make_attention(x, input_type='2d')
+        m2 = tf.keras.layers.Add()([x, x2])
+        return m2
+
+    @staticmethod
+    def _make_stage(input_tensor,
+                    n_block=2,
+                    block_width=96,
+                    group_G=48):
+        x = input_tensor
+        x = RegNet._make_basic_131_block(x,
+                                         filters=block_width,
+                                         filters_per_group=group_G,
+                                         stridess=[1, 2, 1])
+        for i in range(1, n_block):
+            x = RegNet._make_basic_131_block(x,
+                                             filters=block_width,
+                                             filters_per_group=group_G,
+                                             stridess=[1, 1, 1])
+        return x
+
+    @staticmethod
+    def regnet(x, active='relu', dropout_rate=0.2, fc_activation=None, stem_set=48, stage_depth=[2, 6, 17, 2],
+               stage_width=[48, 120, 336, 888], stage_G=24, SEstyle_atten="SE", using_cb=False):
+        x = RegNet._make_stem(x, filters=stem_set, size=(3, 3), strides=2, active=active)
+        for i in range(len(stage_depth)):
+            depth = stage_depth[i]
+            width = stage_width[i]
+            group_G = stage_G
+            x = RegNet._make_stage(x, n_block=depth,
+                                   block_width=width,
+                                   group_G=group_G)
+
+        if dropout_rate > 0:
+            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
+        if fc_activation:
+            x = tf.keras.layers.Activation(fc_activation)(x)
+        return x
+
+
 # inception
 class Inception(object):
     @staticmethod
@@ -6261,6 +6397,189 @@ class Efficientnet(object):
                                    use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
         x = tf.nn.swish(x)
+        return x
+
+
+class Efficientnet_Fpn(object):
+
+    @staticmethod
+    def round_filters(filters, multiplier):
+        depth_divisor = 8
+        min_depth = None
+        min_depth = min_depth or depth_divisor
+        filters = filters * multiplier
+        new_filters = max(min_depth, int(filters + depth_divisor / 2) // depth_divisor * depth_divisor)
+        if new_filters < 0.9 * filters:
+            new_filters += depth_divisor
+        return int(new_filters)
+
+    @staticmethod
+    def round_repeats(repeats, multiplier):
+        if not multiplier:
+            return repeats
+        return int(math.ceil(multiplier * repeats))
+
+    @staticmethod
+    def efficientnet_seblock(inputs, input_channels, ratio=0.25, **kwargs):
+        num_reduced_filters = max(1, int(input_channels * ratio))
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.expand_dims(input=x, axis=1)
+        x = tf.expand_dims(input=x, axis=1)
+        x = tf.keras.layers.Conv2D(filters=num_reduced_filters, kernel_size=(1, 1), strides=1, padding='same',
+                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
+        # x = tf.nn.swish(x)
+        # x = DyReLU(num_reduced_filters)(x)
+        x = tf.nn.relu(x)
+        x = tf.keras.layers.Conv2D(filters=input_channels, kernel_size=(1, 1), strides=1, padding='same',
+                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
+        x = tf.nn.sigmoid(x)
+        x = inputs * x
+        return x
+
+    @staticmethod
+    def efficientnet_mbconv(inputs, in_channels, out_channels, expansion_factor, stride, k, drop_connect_rate,
+                            training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same",
+                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.nn.swish(x)
+        x = FRN()(x)
+        x = DyReLU(in_channels * expansion_factor)(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
+                                            strides=stride,
+                                            padding="same",
+                                            use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
+        x = Efficientnet.efficientnet_seblock(x, input_channels=in_channels * expansion_factor)
+        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same",
+                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = FRN()(x)
+        if stride == 1 and in_channels == out_channels:
+            if drop_connect_rate:
+                x = tf.keras.layers.Dropout(rate=drop_connect_rate)(x)
+            x = tf.keras.layers.concatenate([x, inputs])
+        return x
+
+    @staticmethod
+    def efficientnet_build_mbconv_block(x, in_channels, out_channels, layers, stride, expansion_factor, k,
+                                        drop_connect_rate):
+        for i in range(layers):
+            if i == 0:
+                x = Efficientnet_Fpn.efficientnet_mbconv(x, in_channels=in_channels,
+                                                         out_channels=out_channels,
+                                                         expansion_factor=expansion_factor,
+                                                         stride=stride,
+                                                         k=k,
+                                                         drop_connect_rate=drop_connect_rate)
+            else:
+                x = Efficientnet_Fpn.efficientnet_mbconv(x, in_channels=out_channels,
+                                                         out_channels=out_channels,
+                                                         expansion_factor=expansion_factor,
+                                                         stride=1,
+                                                         k=k,
+                                                         drop_connect_rate=drop_connect_rate)
+        return x
+
+    @staticmethod
+    def Efficientnet(x, width_coefficient, depth_coefficient, dropout_rate, drop_connect_rate=0.2, training=None,
+                     mask=None):
+        x = tf.keras.layers.Conv2D(filters=Efficientnet_Fpn.round_filters(32, width_coefficient),
+                                   kernel_size=(3, 3),
+                                   strides=2,
+                                   padding="same",
+                                   use_bias=False)(x)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.nn.swish(x)
+        x = FRN()(x)
+        x = DyReLU(Efficientnet_Fpn.round_filters(32, width_coefficient))(x)
+
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(32,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(16,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(1,
+                                                                                                   depth_coefficient),
+                                                             stride=1,
+                                                             expansion_factor=1, k=3,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(16,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(24,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(2,
+                                                                                                   depth_coefficient),
+                                                             stride=2,
+                                                             expansion_factor=6, k=3,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(24,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(40,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(2,
+                                                                                                   depth_coefficient),
+                                                             stride=2,
+                                                             expansion_factor=6, k=5,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(40,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(80,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(3,
+                                                                                                   depth_coefficient),
+                                                             stride=2,
+                                                             expansion_factor=6, k=3,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(80,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(112,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(3,
+                                                                                                   depth_coefficient),
+                                                             stride=1,
+                                                             expansion_factor=6, k=5,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(112,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(192,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(4,
+                                                                                                   depth_coefficient),
+                                                             stride=2,
+                                                             expansion_factor=6, k=5,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
+                                                             in_channels=Efficientnet_Fpn.round_filters(192,
+                                                                                                        width_coefficient),
+                                                             out_channels=Efficientnet_Fpn.round_filters(320,
+                                                                                                         width_coefficient),
+                                                             layers=Efficientnet_Fpn.round_repeats(1,
+                                                                                                   depth_coefficient),
+                                                             stride=1,
+                                                             expansion_factor=6, k=3,
+                                                             drop_connect_rate=drop_connect_rate)
+        x = tf.keras.layers.Conv2D(filters=Efficientnet_Fpn.round_filters(1280, width_coefficient),
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same",
+                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
+        # x = tf.keras.layers.BatchNormalization()(x, training=training)
+        # x = tf.nn.swish(x)
+        x = FRN()(x)
+        x = DyReLU(Efficientnet_Fpn.round_filters(1280, width_coefficient))(x)
         return x
 
 
@@ -7900,7 +8219,7 @@ class SEResNet(object):
     def seblock(inputs, input_channels, r=16, **kwargs):
         x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
         x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
+        x = tf.nn.relu(x)
         x = tf.keras.layers.Dense(units=input_channels)(x)
         x = tf.nn.sigmoid(x)
         x = tf.expand_dims(x, axis=1)
@@ -8408,17 +8727,16 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        # x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 24, 16],
-        #                       compression_rate=0.5,
-        #                       drop_rate=0.5)
-        # x = Mobilenet_se.MobileNetV3Small(inputs)
-        # x = Mobilenet_tpu.MobileNetV3Small(inputs)
+        a = Mobilenet_tpu.MobileNetV3Small(inputs)
+        b = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[244, 488, 976, 2048])
+        c = MnasNet.MnasNet(inputs)
+        d = GhostNet.ghostnet(inputs)
+        x = tf.concat([a, b, c, d], axis=-1)
         # x = RES32_DETR.res32_detr(inputs)
         # x = ResNest.resnest(inputs)
         # x = GhostNet.ghostnet(inputs)
-        x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-                                      compression_rate=0.5,
-                                      drop_rate=0.5)
+        # x = Efficientnet_Fpn.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
+        # x = RegNet.regnet(inputs,active='Mish_Activation')
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -8534,6 +8852,9 @@ class Models(object):
 # ResNest
 # x = ResNest.resnest(inputs)
 
+# RegNet
+# x = RegNet.regnet(inputs, active='Mish_Activation')
+
 # Resnet_18
 # x = ResNeXt.ResNetTypeI(inputs, layer_params=(2, 2, 2, 2))
 # Resnet_34
@@ -8595,8 +8916,8 @@ if __name__ == '__main__':
         model.summary()
         for i, n in enumerate(model.layers):
             logger.debug(f'{{i}} {{n.name}}')
-        model._layers = [layer for layer in model.layers if not isinstance(layer, dict)]
-        tf.keras.utils.plot_model(model, show_shapes=True, dpi=48, to_file='model.png')
+        # model._layers = [layer for layer in model.layers if not isinstance(layer, dict)]
+        # tf.keras.utils.plot_model(model, show_shapes=True, dpi=48, to_file='model.png')
 
 """
 
