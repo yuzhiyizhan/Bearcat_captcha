@@ -372,10 +372,12 @@ import cv2
 import time
 import json
 import glob
+import base64
 import shutil
 import random
 import colorsys
 import operator
+import requests
 import numpy as np
 from PIL import Image
 import tensorflow as tf
@@ -2027,12 +2029,14 @@ class Efficientdet_Predict_Image(object):
 
 
 class Predict_Image(object):
-    def __init__(self, model_path=None, app=False):
+    def __init__(self, model_path=None, app=False, classification=False):
         self.iou = 0.3
         self.app = app
         self.confidence = 0.4
         self.model_path = model_path
         self.load_model()
+        self.classification = classification
+
         if MODE == 'EFFICIENTDET':
             self.prior = self._get_prior()
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
@@ -2048,6 +2052,7 @@ class Predict_Image(object):
         else:
             self.model = operator.methodcaller(MODEL)(Models)
             self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
+        logger.debug('加载模型到内存')
         with open(n_class_file, 'r', encoding='utf-8') as f:
             result = f.read()
         self.num_classes_dict = json.loads(result)
@@ -2310,7 +2315,18 @@ class Predict_Image(object):
                 left = max(0, np.floor(left + 0.5).astype('int32'))
                 bottom = min(np.shape(image)[0], np.floor(bottom + 0.5).astype('int32'))
                 right = min(np.shape(image)[1], np.floor(right + 0.5).astype('int32'))
-
+                if self.classification:
+                    image_crop = image.crop((left, top, right, bottom))
+                    image_bytearr = io.BytesIO()
+                    image_crop.save(image_bytearr, format='JPEG')
+                    image_bytes = image_bytearr.getvalue()
+                    data = {{'data': [f'data:image;base64,{{base64.b64encode(image_bytes).decode()}}']}}
+                    response = requests.post('http://127.0.0.1:7860/api/predict/', json=data).json()
+                    result = json.loads(response.get('data')[0].get('label'))
+                    predicted_class = result.get('result')
+                    recognition_rate = result.get('recognition_rate')
+                    recognition_rate = float(recognition_rate.replace('%', '')) / 100
+                    recognition_rate_list.append(recognition_rate)
                 # 画框框
                 label = '{{}} {{:.2f}}'.format(predicted_class, score)
                 draw = ImageDraw.Draw(image)
@@ -2497,31 +2513,61 @@ class Predict_Image(object):
                                                     np.array([IMAGE_SIZES[PHI], IMAGE_SIZES[PHI]]),
                                                     image_shape)
 
-            for i, c in enumerate(top_label_indices):
-                predicted_class = self.num_classes_list[int(c)]
-                score = top_conf[i]
-
-                top, left, bottom, right = boxes[i]
-                top = top - 5
-                left = left - 5
-                bottom = bottom + 5
-                right = right + 5
-
-                top = max(0, np.floor(top + 0.5).astype('int32'))
-                left = max(0, np.floor(left + 0.5).astype('int32'))
-                bottom = min(np.shape(image)[0], np.floor(bottom + 0.5).astype('int32'))
-                right = min(np.shape(image)[1], np.floor(right + 0.5).astype('int32'))
+            def classifications(image, left, top, right, bottom):
+                image_crop = image.crop((left, top, right, bottom))
+                image_bytearr = io.BytesIO()
+                image_crop.save(image_bytearr, format='JPEG')
+                image_bytes = image_bytearr.getvalue()
+                data = {{'data': [f'data:image;base64,{{base64.b64encode(image_bytes).decode()}}']}}
+                response = requests.post('http://127.0.0.1:7860/api/predict/', json=data).json()
+                result = json.loads(response.get('data')[0].get('label'))
+                predicted_class = result.get('result')
+                recognition_rate = result.get('recognition_rate')
+                recognition_rate = float(recognition_rate.replace('%', '')) / 100
+                recognition_rate_list.append(recognition_rate)
                 label = {{"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}}
                 result_list.append(label)
-                recognition_rate_list.append(score)
+
+            with ThreadPoolExecutor(max_workers=10) as t:
+                for i, c in enumerate(top_label_indices):
+                    predicted_class = self.num_classes_list[int(c)]
+                    score = top_conf[i]
+                    recognition_rate_list.append(score)
+                    top, left, bottom, right = boxes[i]
+                    top = top - 5
+                    left = left - 5
+                    bottom = bottom + 5
+                    right = right + 5
+
+                    top = max(0, np.floor(top + 0.5).astype('int32'))
+                    left = max(0, np.floor(left + 0.5).astype('int32'))
+                    bottom = min(np.shape(image)[0], np.floor(bottom + 0.5).astype('int32'))
+                    right = min(np.shape(image)[1], np.floor(right + 0.5).astype('int32'))
+
+                    if self.classification:
+                        t.submit(classifications, image, left, top, right, bottom)
+                        # image_crop = image.crop((left, top, right, bottom))
+                        # image_bytearr = io.BytesIO()
+                        # image_crop.save(image_bytearr, format='JPEG')
+                        # image_bytes = image_bytearr.getvalue()
+                        # data = {{'data': [f'data:image;base64,{{base64.b64encode(image_bytes).decode()}}']}}
+                        # response = requests.post('http://127.0.0.1:7860/api/predict/', json=data).json()
+                        # result = json.loads(response.get('data')[0].get('label'))
+                        # predicted_class = result.get('result')
+                        # recognition_rate = result.get('recognition_rate')
+                        # recognition_rate = float(recognition_rate.replace('%', '')) / 100
+                        # recognition_rate_list.append(recognition_rate)
+                        # label = {{"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}}
+                        # result_list.append(label)
+                    else:
+                        label = {{"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}}
+                        result_list.append(label)
 
             recognition_rate = self.recognition_probability(recognition_rate_list)
             end_time = time.time()
             times = end_time - start_time
             return {{'result': str(result_list), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
                     'times': str(times)}}
-
-
 
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
             result_list = []
@@ -2615,7 +2661,6 @@ def running_time(time):
             return str('%.2f' % m) + 'm'
     else:
         return str('%.2f' % time) + 's'
-
 
 """
 
@@ -6288,7 +6333,7 @@ class Efficientnet(object):
         return x
 
     @staticmethod
-    def efficientnet_mbconv(inputs, in_channels, out_channels, expansion_factor, stride, k, drop_connect_rate,
+    def efficientnet_mbconv(inputs, in_channels, out_channels, expansion_factor, stride, k, drop_connect_rate, lite,
                             training=None, **kwargs):
         x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
                                    kernel_size=(1, 1),
@@ -6296,7 +6341,7 @@ class Efficientnet(object):
                                    padding="same",
                                    use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
+        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
         x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
                                             strides=stride,
                                             padding="same",
@@ -6317,7 +6362,7 @@ class Efficientnet(object):
 
     @staticmethod
     def efficientnet_build_mbconv_block(x, in_channels, out_channels, layers, stride, expansion_factor, k,
-                                        drop_connect_rate):
+                                        drop_connect_rate, lite):
         for i in range(layers):
             if i == 0:
                 x = Efficientnet.efficientnet_mbconv(x, in_channels=in_channels,
@@ -6325,78 +6370,86 @@ class Efficientnet(object):
                                                      expansion_factor=expansion_factor,
                                                      stride=stride,
                                                      k=k,
-                                                     drop_connect_rate=drop_connect_rate)
+                                                     drop_connect_rate=drop_connect_rate, lite=lite)
             else:
                 x = Efficientnet.efficientnet_mbconv(x, in_channels=out_channels,
                                                      out_channels=out_channels,
                                                      expansion_factor=expansion_factor,
                                                      stride=1,
                                                      k=k,
-                                                     drop_connect_rate=drop_connect_rate)
+                                                     drop_connect_rate=drop_connect_rate, lite=lite)
         return x
 
     @staticmethod
     def Efficientnet(x, width_coefficient, depth_coefficient, dropout_rate, drop_connect_rate=0.2, training=None,
-                     mask=None):
+                     mask=None, lite=False):
         x = tf.keras.layers.Conv2D(filters=Efficientnet.round_filters(32, width_coefficient),
                                    kernel_size=(3, 3),
                                    strides=2,
                                    padding="same",
                                    use_bias=False)(x)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
+        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(32, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(16, width_coefficient),
                                                          layers=Efficientnet.round_repeats(1, depth_coefficient),
                                                          stride=1,
-                                                         expansion_factor=1, k=3, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=1, k=3, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(16, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(24, width_coefficient),
                                                          layers=Efficientnet.round_repeats(2, depth_coefficient),
                                                          stride=2,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(24, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(40, width_coefficient),
                                                          layers=Efficientnet.round_repeats(2, depth_coefficient),
                                                          stride=2,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(40, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(80, width_coefficient),
                                                          layers=Efficientnet.round_repeats(3, depth_coefficient),
                                                          stride=2,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(80, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(112,
                                                                                                  width_coefficient),
                                                          layers=Efficientnet.round_repeats(3, depth_coefficient),
                                                          stride=1,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(112, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(192,
                                                                                                  width_coefficient),
                                                          layers=Efficientnet.round_repeats(4, depth_coefficient),
                                                          stride=2,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate)
+                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
         x = Efficientnet.efficientnet_build_mbconv_block(x,
                                                          in_channels=Efficientnet.round_filters(192, width_coefficient),
                                                          out_channels=Efficientnet.round_filters(320,
                                                                                                  width_coefficient),
                                                          layers=Efficientnet.round_repeats(1, depth_coefficient),
                                                          stride=1,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate)
-        x = tf.keras.layers.Conv2D(filters=Efficientnet.round_filters(1280, width_coefficient),
+                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
+                                                         lite=lite)
+
+        x = tf.keras.layers.Conv2D(filters=1280 if lite else Efficientnet.round_filters(1280, width_coefficient),
                                    kernel_size=(1, 1),
                                    strides=1,
                                    padding="same",
                                    use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
         x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
+        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
         return x
 
 
@@ -8735,8 +8788,8 @@ class Models(object):
         # x = RES32_DETR.res32_detr(inputs)
         # x = ResNest.resnest(inputs)
         # x = GhostNet.ghostnet(inputs)
-        # x = Efficientnet_Fpn.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
-        # x = RegNet.regnet(inputs,active='Mish_Activation')
+        # x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
+        # x = RegNet.regnet(inputs, active='Mish_Activation')
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -8870,6 +8923,11 @@ class Models(object):
 # ResNeXt101
 # x = ResNeXt.Resnext(inputs, repeat_num_list=(3, 4, 23, 3), cardinality=32)
 
+# SEResNet50
+# x = SEResNet.SEResNet(inputs, block_num=[3, 4, 6, 3])
+# SEResNet152
+# x = SEResNet.SEResNet(inputs, block_num=[3, 8, 36, 3])
+
 ## small(适合使用CPU训练)
 # MobileNetV1
 # x = Mobilenet.MobileNetV1(inputs)
@@ -8880,10 +8938,6 @@ class Models(object):
 # MobileNetV3Small
 # x = Mobilenet.MobileNetV3Small(inputs)
 
-# SEResNet50
-# x = SEResNet.SEResNet(inputs, block_num=[3, 4, 6, 3])
-# SEResNet152
-# x = SEResNet.SEResNet(inputs, block_num=[3, 8, 36, 3])
 # ShuffleNet_0_5x
 # x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[48, 96, 192, 1024])
 # ShuffleNet_1_0x
@@ -8892,6 +8946,9 @@ class Models(object):
 # x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[176, 352, 704, 1024])
 # ShuffleNet_2_0x
 # x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[244, 488, 976, 2048])
+
+# Efficient_net_b0
+# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2, lite=False)
 
 # SqueezeNet
 # x = SqueezeNet.SqueezeNet(inputs)
