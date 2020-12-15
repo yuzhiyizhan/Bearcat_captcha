@@ -2436,8 +2436,10 @@ class Predict_Image(object):
                 vertor = model.predict(self.decode_image(image))
             text, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
             right_text = self.decode_label(image)
-            logger.info(f'预测为{{text}},真实为{{right_text}}')
-            logger.info(f'识别率为:{{recognition_rate * 100}}%')
+            logger.info(f'预测为{{text}},真实为{{right_text}}') if text == right_text else logger.error(
+                f'预测为{{text}},真实为{{right_text}}')
+            logger.info(f'识别率为:{{recognition_rate * 100}}%') if recognition_rate > 0.7 else logger.error(
+                f'识别率为:{{recognition_rate * 100}}%')
             if str(text) != str(right_text):
                 logger.error(f'预测失败的图片路径为:{{image}}')
                 right_value = right_value + 1
@@ -2661,6 +2663,7 @@ def running_time(time):
             return str('%.2f' % m) + 'm'
     else:
         return str('%.2f' % time) + 's'
+
 
 """
 
@@ -9303,6 +9306,9 @@ from {work_path}.{project_name}.utils import Image_Processing
 
 start = time.time()
 time_list = []
+
+logger.add('result.log')
+
 
 if USE_GPU:
     gpus = tf.config.experimental.list_physical_devices(device_type="GPU")
