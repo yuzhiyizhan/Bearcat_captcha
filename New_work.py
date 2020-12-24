@@ -608,7 +608,7 @@ class Image_Processing(object):
 
     # 分割数据集
     @classmethod
-    def move_path(self, path: list, proportion=DIVIDE_RATO) -> bool:
+    def split_dataset(self, path: list, proportion=DIVIDE_RATO) -> bool:
         if DIVIDE:
             number = 0
             logger.debug(f'数据集有{{len(path)}},{{proportion * 100}}%作为验证集,{{proportion * 100}}%作为测试集')
@@ -2788,7 +2788,6 @@ from loguru import logger
 from functools import wraps
 from six.moves import xrange
 from functools import reduce
-import tensorflow_addons as tfa
 import xml.etree.ElementTree as ET
 from tensorflow.keras import backend as K
 from adabelief_tf import AdaBeliefOptimizer
@@ -3414,6 +3413,39 @@ class GroupedConv2D(object):
         return x
 
 
+class SCConv(tf.keras.layers.Layer):
+    def __init__(self, filters, stride=1, padding='same', dilation=1, groups=1):
+        super(SCConv, self).__init__()
+        self.filters = filters
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+
+    def __call__(self, x):
+        identity = x
+        k2 = tf.keras.layers.AveragePooling2D(pool_size=4, strides=4)(x)
+        k2 = tf.keras.layers.Conv2D(filters=self.filters, kernel_size=3, strides=self.stride, padding=self.padding,
+                                    dilation_rate=self.dilation, groups=self.groups, use_bias=False)(k2)
+        k2 = FRN()(k2)
+        k3 = tf.keras.layers.Conv2D(filters=self.filters, kernel_size=3, strides=self.stride, padding=self.padding,
+                                    dilation_rate=self.dilation, groups=self.groups, use_bias=False)(x)
+        k3 = FRN()(k3)
+        k4 = tf.keras.layers.Conv2D(filters=self.filters, kernel_size=3, strides=self.stride, padding=self.padding,
+                                    dilation_rate=self.dilation, groups=self.groups, use_bias=False)
+        out = tf.keras.layers.UpSampling2D(size=(4, 4))(k2)
+        out = tf.keras.layers.add([identity, out])
+        out = tf.nn.sigmoid(out)
+        out = tf.keras.layers.multiply([k3, out])
+        out = k4(out)
+        out = FRN()(out)
+        return out
+
+    def get_config(self):
+        config = super(SCConv, self).get_config()
+        return config
+
+
 class Transformer_mask(object):
     @staticmethod
     def get_angles(pos, i, d_model):
@@ -3953,9 +3985,9 @@ class Yolo_Loss(object):
 
             confidence_loss = K.sum(confidence_loss) / mf
             class_loss = K.sum(class_loss) / mf
-            location_loss = tf.reduce_mean(location_loss)
-            confidence_loss = tf.reduce_mean(confidence_loss)
-            class_loss = tf.reduce_mean(class_loss)
+            location_loss = K.sum(location_loss) / mf
+            confidence_loss = K.sum(confidence_loss) / mf
+            class_loss = K.sum(class_loss) / mf
             loss += location_loss + confidence_loss + class_loss
         loss = K.expand_dims(loss, axis=-1)
         return loss
@@ -4810,6 +4842,213 @@ class Settings(object):
         return n_class
 
 
+class Yolov3_block(object):
+    @staticmethod
+    def darknetconv(x, filters, size, strides=1, batch_norm=True):
+        if strides == 1:
+            padding = 'same'
+        else:
+            x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
+            padding = 'valid'
+        x = tf.keras.layers.Conv2D(filters=filters, kernel_size=size, strides=strides, padding=padding,
+                                   use_bias=not batch_norm, kernel_regularizer=tf.keras.regularizers.l2(0.0005))
+        if batch_norm:
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.LeakyReLU(alpha=0.1)(x)
+        return x
+
+    @staticmethod
+    def darknetresidual(x, filters):
+        prev = x
+        x = Yolov3_block.darknetconv(x, filters // 2, 1)
+        x = Yolov3_block.darknetconv(x, filters, 3)
+        x = tf.keras.layers.Add()([prev, x])
+        return x
+
+    @staticmethod
+    def darknetblock(x, filters, blocks):
+        x = Yolov3_block.darknetconv(x, filters, 3, strides=2)
+        for _ in range(blocks):
+            x = Yolov3_block.darknetresidual(x, filters)
+        return x
+
+    @staticmethod
+    def darknet(inputs):
+        x = inputs
+        x = Yolov3_block.darknetconv(x, 32, 3)
+        x = Yolov3_block.darknetconv(x, 64, 1)
+        x = Yolov3_block.darknetconv(x, 128, 2)
+        x = x_36 = Yolov3_block.darknetblock(x, 256, 8)
+        x = x_61 = Yolov3_block.darknetblock(x, 512, 8)
+        x = Yolov3_block.darknetblock(x, 1024, 4)
+        return x_36, x_61, x
+
+    @staticmethod
+    def darknettiny(inputs):
+        x = inputs
+        x = Yolov3_block.darknetconv(x, 16, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 2, 'same')(x)
+        x = Yolov3_block.darknetconv(x, 32, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 2, 'same')(x)
+        x = Yolov3_block.darknetconv(x, 64, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 2, 'same')(x)
+        x = Yolov3_block.darknetconv(x, 128, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 2, 'same')(x)
+        x = x_8 = Yolov3_block.darknetconv(x, 256, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 2, 'same')(x)
+        x = Yolov3_block.darknetconv(x, 512, 3)
+        x = tf.keras.layers.MaxPooling2D(2, 1, 'same')(x)
+        x = Yolov3_block.darknetconv(x, 1024, 3)
+        return x_8, x
+
+    @staticmethod
+    def yoloconv(filters):
+        def yolo_conv(x_in):
+            if isinstance(x_in, tuple):
+                inputs = tf.keras.layers.Input(x_in[0].shape[1:]), tf.keras.layers.Input(x_in[1].shape[1:])
+                x, x_skip = inputs
+                x = Yolov3_block.darknetconv(x, filters, 1)
+                x = tf.keras.layers.UpSampling2D(2)(x)
+                x = tf.keras.layers.Concatenate()([x, x_skip])
+            else:
+                x = inputs = tf.keras.layers.Input(x_in.shape[1:])
+
+            x = Yolov3_block.darknetconv(x, filters, 1)
+            x = Yolov3_block.darknetconv(x, filters * 2, 3)
+            x = Yolov3_block.darknetconv(x, filters, 1)
+            x = Yolov3_block.darknetconv(x, filters * 2, 3)
+            x = Yolov3_block.darknetconv(x, filters, 1)
+            return tf.keras.Model(inputs, x)(x_in)
+
+        return yolo_conv
+
+    @staticmethod
+    def yoloconvtiny(filters):
+        def yolo_conv(x_in):
+            if isinstance(x_in, tuple):
+                inputs = tf.keras.layers.Input(x_in[0].shape[1:]), tf.keras.layers.Input(x_in[1].shape[1:])
+                x, x_skip = inputs
+                x = Yolov3_block.darknetconv(x, filters, 1)
+                x = tf.keras.layers.UpSampling2D(2)(x)
+                x = tf.keras.layers.Concatenate()([x, x_skip])
+            else:
+                x = inputs = tf.keras.layers.Input(x_in.shape[1:])
+                x = Yolov3_block.darknetconv(x, filters, 1)
+            return tf.keras.Model(inputs, x)(x_in)
+
+        return yolo_conv
+
+    @staticmethod
+    def yolo_output(filters, anchors, classes):
+        def yolo_output(x_in):
+            x = inputs = tf.keras.layers.Input(x_in.shape[1:])
+            x = Yolov3_block.darknetconv(x, filters * 2, 3)
+            x = Yolov3_block.darknetconv(x, anchors * (classes + 5), 1, batch_norm=False)
+            x = tf.keras.layers.Lambda(lambda x: tf.reshape(x, (-1, tf.shape(x)[1], tf.shape(x)[2],
+                                                                anchors, classes + 5)))(x)
+            return tf.keras.Model(inputs, x)(x_in)
+
+        return yolo_output
+
+
+class Yolov3_losses(object):
+    @staticmethod
+    def yolo_boxes(pred, anchors, classes):
+        grid_size = tf.shape(pred)[1:3]
+        box_xy, box_wh, objectness, class_probs = tf.split(
+            pred, (2, 2, 1, classes), axis=-1)
+        box_xy = tf.sigmoid(box_xy)
+        objectness = tf.sigmoid(objectness)
+        class_probs = tf.sigmoid(class_probs)
+        pred_box = tf.concat((box_xy, box_wh), axis=-1)  # original xywh for loss
+        grid = tf.meshgrid(tf.range(grid_size[1]), tf.range(grid_size[0]))
+        grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
+        box_xy = (box_xy + tf.cast(grid, tf.float32)) /                  tf.cast(grid_size, tf.float32)
+        box_wh = tf.exp(box_wh) * anchors
+        box_x1y1 = box_xy - box_wh / 2
+        box_x2y2 = box_xy + box_wh / 2
+        bbox = tf.concat([box_x1y1, box_x2y2], axis=-1)
+        return bbox, objectness, class_probs, pred_box
+
+    @staticmethod
+    def yolo_nms(outputs, anchors, masks, classes):
+        b, c, t = [], [], []
+        for o in outputs:
+            b.append(tf.reshape(o[0], (tf.shape(o[0])[0], -1, tf.shape(o[0])[-1])))
+            c.append(tf.reshape(o[1], (tf.shape(o[1])[0], -1, tf.shape(o[1])[-1])))
+            t.append(tf.reshape(o[2], (tf.shape(o[2])[0], -1, tf.shape(o[2])[-1])))
+        bbox = tf.concat(b, axis=1)
+        confidence = tf.concat(c, axis=1)
+        class_probs = tf.concat(t, axis=1)
+        scores = confidence * class_probs
+        boxes, scores, classes, valid_detections = tf.image.combined_non_max_suppression(
+            boxes=tf.reshape(bbox, (tf.shape(bbox)[0], -1, 1, 4)),
+            scores=tf.reshape(
+                scores, (tf.shape(scores)[0], -1, tf.shape(scores)[-1])),
+            max_output_size_per_class=100,
+            max_total_size=100,
+            iou_threshold=0.5,
+            score_threshold=0.5
+        )
+        return boxes, scores, classes, valid_detections
+
+    @staticmethod
+    def broadcast_iou(box_1, box_2):
+        box_1 = tf.expand_dims(box_1, -2)
+        box_2 = tf.expand_dims(box_2, 0)
+        new_shape = tf.broadcast_dynamic_shape(tf.shape(box_1), tf.shape(box_2))
+        box_1 = tf.broadcast_to(box_1, new_shape)
+        box_2 = tf.broadcast_to(box_2, new_shape)
+        int_w = tf.maximum(tf.minimum(box_1[..., 2], box_2[..., 2]) -
+                           tf.maximum(box_1[..., 0], box_2[..., 0]), 0)
+        int_h = tf.maximum(tf.minimum(box_1[..., 3], box_2[..., 3]) -
+                           tf.maximum(box_1[..., 1], box_2[..., 1]), 0)
+        int_area = int_w * int_h
+        box_1_area = (box_1[..., 2] - box_1[..., 0]) *                      (box_1[..., 3] - box_1[..., 1])
+        box_2_area = (box_2[..., 2] - box_2[..., 0]) *                      (box_2[..., 3] - box_2[..., 1])
+        return int_area / (box_1_area + box_2_area - int_area)
+
+    @staticmethod
+    def yololoss(anchors, classes=80, ignore_thresh=0.5):
+        def yolo_loss(y_true, y_pred):
+            pred_box, pred_obj, pred_class, pred_xywh = Yolov3_losses.yolo_boxes(
+                y_pred, anchors, classes)
+            pred_xy = pred_xywh[..., 0:2]
+            pred_wh = pred_xywh[..., 2:4]
+            true_box, true_obj, true_class_idx = tf.split(
+                y_true, (4, 1, 1), axis=-1)
+            true_xy = (true_box[..., 0:2] + true_box[..., 2:4]) / 2
+            true_wh = true_box[..., 2:4] - true_box[..., 0:2]
+            box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1]
+            grid_size = tf.shape(y_true)[1]
+            grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
+            grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)
+            true_xy = true_xy * tf.cast(grid_size, tf.float32) -                       tf.cast(grid, tf.float32)
+            true_wh = tf.math.log(true_wh / anchors)
+            true_wh = tf.where(tf.math.is_inf(true_wh),
+                               tf.zeros_like(true_wh), true_wh)
+            obj_mask = tf.squeeze(true_obj, -1)
+            best_iou = tf.map_fn(
+                lambda x: tf.reduce_max(Yolov3_losses.broadcast_iou(x[0], tf.boolean_mask(
+                    x[1], tf.cast(x[2], tf.bool))), axis=-1),
+                (pred_box, true_box, obj_mask),
+                tf.float32)
+            ignore_mask = tf.cast(best_iou < ignore_thresh, tf.float32)
+            xy_loss = obj_mask * box_loss_scale *                       tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)
+            wh_loss = obj_mask * box_loss_scale *                       tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1)
+            obj_loss = tf.keras.losses.binary_crossentropy(true_obj, pred_obj)
+            obj_loss = obj_mask * obj_loss +                        (1 - obj_mask) * ignore_mask * obj_loss
+            class_loss = obj_mask * tf.keras.losses.sparse_categorical_crossentropy(
+                true_class_idx, pred_class)
+            xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))
+            wh_loss = tf.reduce_sum(wh_loss, axis=(1, 2, 3))
+            obj_loss = tf.reduce_sum(obj_loss, axis=(1, 2, 3))
+            class_loss = tf.reduce_sum(class_loss, axis=(1, 2, 3))
+            return xy_loss + wh_loss + obj_loss + class_loss
+
+        return yolo_loss
+
+
 ########################################
 # 分割线
 ########################################
@@ -4819,8 +5058,27 @@ class Settings(object):
 ## 模型定义
 ########################################
 
+
 # GhostNet
 class GhostNet(object):
+    @staticmethod
+    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
+
+        filters = input_tensor.get_shape().as_list()[channel_axis]
+        if input_type == '2d':
+            se_shape = (1, 1, filters)
+            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
+        elif input_type == '1d':
+            se_shape = (1, filters)
+            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
+        else:
+            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
+        se = tf.keras.layers.Reshape(se_shape)(se)
+        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
+            se)
+        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
+        x = tf.keras.layers.Multiply()([input_tensor, se])
+        return x
 
     @staticmethod
     def ghostnet(x):
@@ -4850,6 +5108,38 @@ class GhostNet(object):
         x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Activation('relu')(x)
+        return x
+
+    @staticmethod
+    def ghostnet_dy(x):
+        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(x)
+        x = FRN()(x)
+        x = DyReLU(16)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = tf.keras.layers.Conv2D(960, (1, 1), strides=(1, 1), padding='same', data_format='channels_last',
+                                   activation=None, use_bias=False)(x)
+        x = GhostNet._squeeze_excite_block(x)
+        x = FRN()(x)
+        x = DyReLU(960)(x)
+        x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
+        x = GhostNet._squeeze_excite_block(x)
+        x = FRN()(x)
+        x = DyReLU(1280)(x)
         return x
 
 
@@ -5063,8 +5353,6 @@ class Yolo_tiny_model(object):
         # feat1 26x26x256
         # feat2 13x13x512
         feat1, feat2 = Yolo_tiny_model.darknet_body(inputs)
-        logger.debug(feat1)
-        logger.debug(feat2)
         # 13x13x512 -> 13x13x256
         P5 = Yolo_model.DarknetConv2D_BN_Leaky(256, (1, 1))(feat2)
 
@@ -5277,7 +5565,7 @@ class RES32_DETR(object):
         if dropout_rate > 0:
             x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
         if using_transformer:
-            x = tf.reduce_sum(x, 1)
+            x = tf.expand_dims(x, 1)
         # fc_out = tf.keras.layers.Dense(self.n_classes, kernel_initializer='he_normal', use_bias=False)(x)
         # if self.using_transformer:
         #     fc_out = tf.reduce_sum(fc_out, 1)
@@ -5774,6 +6062,145 @@ class RegNet(object):
 
         if dropout_rate > 0:
             x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
+        if fc_activation:
+            x = tf.keras.layers.Activation(fc_activation)(x)
+        return x
+
+
+class RegNet_Diy(object):
+
+    @staticmethod
+    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
+
+        filters = input_tensor.get_shape().as_list()[channel_axis]
+        if input_type == '2d':
+            se_shape = (1, 1, filters)
+            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
+        elif input_type == '1d':
+            se_shape = (1, filters)
+            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
+        else:
+            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
+        se = tf.keras.layers.Reshape(se_shape)(se)
+        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
+            se)
+        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
+        x = tf.keras.layers.Multiply()([input_tensor, se])
+        return x
+
+    @staticmethod
+    def _make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
+        x = input_tensor
+        if SEstyle_atten == 'SE':
+            x = RegNet_Diy._squeeze_excite_block(x, input_type=input_type)
+        return x
+
+    @staticmethod
+    def _make_dropout(input_tensor, dropout_range=[0.2, 0.4]):
+        x = input_tensor
+        rate = random.uniform(dropout_range[0], dropout_range[1])
+        random_seed = random.randint(0, 5000)
+        x = tf.keras.layers.Dropout(rate, noise_shape=None, seed=random_seed)(x)
+        return x
+
+    @staticmethod
+    def _make_stem(input_tensor, filters=32, size=(7, 7), strides=2, channel_axis=-1,
+                   active='relu'):
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=size, strides=strides,
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = FRN()(x)
+        x = DyReLU(filters)(x)
+        x = tf.keras.layers.GaussianNoise(0.5)(x)
+        x = RegNet_Diy._squeeze_excite_block(x)
+        return x
+
+    @staticmethod
+    def _make_basic_131_block(input_tensor,
+                              filters=96,
+                              group_kernel_size=[3, 3, 3],
+                              filters_per_group=48,
+                              stridess=[1, 2, 1], channel_axis=-1, active='relu'):
+
+        x2 = tf.identity(input_tensor)
+        if 2 in stridess:
+            x2 = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1),
+                                        strides=2,
+                                        padding='same',
+                                        kernel_initializer='he_normal',
+                                        use_bias=False,
+                                        data_format='channels_last')(x2)
+            # x2 = SCConv(filters)(x2)
+            x2 = FRN()(x2)
+            x2 = DyReLU(filters)(x2)
+            x2 = tf.keras.layers.GaussianNoise(0.5)(x2)
+            x2 = RegNet_Diy._squeeze_excite_block(x2)
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[0],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        # x = SCConv(filters)(x)
+        x = FRN()(x)
+        x = DyReLU(filters)(x)
+        x = tf.keras.layers.GaussianNoise(0.5)(x)
+        x = RegNet_Diy._squeeze_excite_block(x)
+        x = GroupedConv2D(filters=filters, kernel_size=group_kernel_size, strides=stridess[1],
+                          use_keras=True, padding='same', kernel_initializer='he_normal',
+                          use_bias=False, data_format='channels_last')(x)
+        x = FRN()(x)
+        x = DyReLU(filters)(x)
+        x = tf.keras.layers.GaussianNoise(0.5)(x)
+        x = RegNet_Diy._squeeze_excite_block(x)
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[2],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = FRN()(x)
+        x = DyReLU(filters)(x)
+        x = tf.keras.layers.GaussianNoise(0.5)(x)
+        x = RegNet_Diy._make_attention(x, input_type='2d')
+        m2 = tf.keras.layers.Add()([x, x2])
+        return m2
+
+    @staticmethod
+    def _make_stage(input_tensor,
+                    n_block=2,
+                    block_width=96,
+                    group_G=48):
+        x = input_tensor
+        x = RegNet_Diy._make_basic_131_block(x,
+                                             filters=block_width,
+                                             filters_per_group=group_G,
+                                             stridess=[1, 2, 1])
+        for i in range(1, n_block):
+            x = RegNet_Diy._make_basic_131_block(x,
+                                                 filters=block_width,
+                                                 filters_per_group=group_G,
+                                                 stridess=[1, 1, 1])
+        return x
+
+    @staticmethod
+    def regnet(x, active='relu', dropout_rate=0.2, fc_activation=None, stem_set=48, stage_depth=[2, 6, 17, 2],
+               stage_width=[48, 120, 336, 888], stage_G=24, SEstyle_atten="SE", using_cb=False):
+        x = RegNet_Diy._make_stem(x, filters=stem_set, size=(3, 3), strides=2, active=active)
+        for i in range(len(stage_depth)):
+            depth = stage_depth[i]
+            width = stage_width[i]
+            group_G = stage_G
+            x = RegNet_Diy._make_stage(x, n_block=depth,
+                                       block_width=width,
+                                       group_G=group_G)
+
+        if dropout_rate > 0:
+            x = tf.keras.layers.GaussianNoise(dropout_rate)(x)
         if fc_activation:
             x = tf.keras.layers.Activation(fc_activation)(x)
         return x
@@ -8472,6 +8899,71 @@ class SqueezeNet(object):
         return x
 
 
+class SqueezeNet_squeeze(object):
+    @staticmethod
+    def squeeze(inputs):
+        # 注意力机制单元
+        input_channels = int(inputs.shape[-1])
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
+        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
+        x = tf.keras.layers.Dense(input_channels)(x)
+        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
+        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
+        x = tf.keras.layers.Multiply()([inputs, x])
+        return x
+
+    @staticmethod
+    def FireModule(inputs, s1, e1, e3, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=s1,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(inputs)
+        x = SqueezeNet_squeeze.squeeze(x)
+        x = tf.nn.swish(x)
+        y1 = tf.keras.layers.Conv2D(filters=e1,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x)
+        x = SqueezeNet_squeeze.squeeze(x)
+        y1 = tf.nn.swish(y1)
+        y2 = tf.keras.layers.Conv2D(filters=e3,
+                                    kernel_size=(3, 3),
+                                    strides=1,
+                                    padding="same")(x)
+        x = SqueezeNet_squeeze.squeeze(x)
+        y2 = tf.nn.swish(y2)
+        return tf.concat(values=[y1, y2], axis=-1)
+
+    @staticmethod
+    def SqueezeNet(x, training=None, mask=None):
+        x = tf.keras.layers.Conv2D(filters=96,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding="same")(x)
+        x = SqueezeNet_squeeze.squeeze(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = SqueezeNet_squeeze.FireModule(x, s1=16, e1=64, e3=64)
+        x = SqueezeNet_squeeze.FireModule(x, s1=16, e1=64, e3=64)
+        x = SqueezeNet_squeeze.FireModule(x, s1=32, e1=128, e3=128)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = SqueezeNet_squeeze.FireModule(x, s1=32, e1=128, e3=128)
+        x = SqueezeNet_squeeze.FireModule(x, s1=48, e1=192, e3=192)
+        x = SqueezeNet_squeeze.FireModule(x, s1=48, e1=192, e3=192)
+        x = SqueezeNet_squeeze.FireModule(x, s1=64, e1=256, e3=256)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = SqueezeNet_squeeze.FireModule(x, s1=64, e1=256, e3=256)
+        x = tf.keras.layers.Dropout(rate=0.5)(x)
+        x = tf.keras.layers.Conv2D(filters=Settings.settings(),
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        return x
+
+
 # MnasNet
 class MnasNet(object):
     @staticmethod
@@ -8783,16 +9275,7 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        a = Mobilenet_tpu.MobileNetV3Small(inputs)
-        b = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[244, 488, 976, 2048])
-        c = MnasNet.MnasNet(inputs)
-        d = GhostNet.ghostnet(inputs)
-        x = tf.concat([a, b, c, d], axis=-1)
-        # x = RES32_DETR.res32_detr(inputs)
-        # x = ResNest.resnest(inputs)
-        # x = GhostNet.ghostnet(inputs)
-        # x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
-        # x = RegNet.regnet(inputs, active='Mish_Activation')
+        x = RES32_DETR.res32_detr(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -8825,16 +9308,10 @@ class Models(object):
     @staticmethod
     def captcha_ctc_tiny(num_init_features=64, growth_rate=32, block_layers=[6, 12, 64, 48],
                          compression_rate=0.5,
-                         drop_rate=0.5, training=None,
-                         mask=None, train=False):
+                         drop_rate=0.5, mask=None, training=False):
         inputs = tf.keras.layers.Input(shape=inputs_shape, name='inputs')
-        # x = Densenet.Densenet(inputs, num_init_features, growth_rate, block_layers, compression_rate,
-        #                                  drop_rate)
-        x = ResNest.resnest(inputs)
-        # x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
-        # x = CBAM_ResNet.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
-        # x = ResNext_squeeze.Resnext(inputs, repeat_num_list=(2, 2, 2, 2), cardinality=32)
-        # x = Mobilenet.MobileNetV3Small(inputs)
+        x = Densenet.Densenet(inputs, num_init_features, growth_rate, block_layers, compression_rate,
+                              drop_rate)
         x = tf.keras.layers.Reshape((x.shape[1] * x.shape[2], x.shape[3]), name='reshape_len')(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
@@ -8845,7 +9322,7 @@ class Models(object):
         label_len = tf.keras.layers.Input(shape=(1), name='label_len')
         ctc_out = tf.keras.layers.Lambda(ctc_lambda_func, name='ctc')([x, labels, input_len, label_len])
         ctc_model = tf.keras.Model(inputs=[inputs, labels, input_len, label_len], outputs=ctc_out)
-        if train:
+        if training:
             ctc_model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                            weight_decay=1e-2, rectify=False),
                               loss={{'ctc': lambda y_true, y_pred: y_pred}})
@@ -8855,6 +9332,56 @@ class Models(object):
                                                        weight_decay=1e-2, rectify=False),
                           loss={{'ctc': lambda y_true, y_pred: y_pred}})
             return model
+
+    @staticmethod
+    def captcha_yolov3(training=False):
+        anchors = YOLO_anchors.get_anchors() / 416
+        masks = np.array([[6, 7, 8], [3, 4, 5], [0, 1, 2]])
+        x = inputs = tf.keras.layers.Input((IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNALS))
+        x_36, x_61, x = Yolov3_block.darknet(x)
+        x = Yolov3_block.yoloconv(512)(x)
+        output_0 = Yolov3_block.yolo_output(512, len(masks[0]), Settings.settings_num_classes())(x)
+        x = Yolov3_block.yoloconv(256)((x, x_61))
+        output_1 = Yolov3_block.yolo_output(256, len(masks[1]), Settings.settings_num_classes())(x)
+        x = Yolov3_block.yoloconv(128)((x, x_36))
+        output_2 = Yolov3_block.yolo_output(128, len(masks[2]), Settings.settings_num_classes())(x)
+
+        if training:
+            return tf.keras.Model(inputs, (output_0, output_1, output_2))
+
+        boxes_0 = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_boxes(x, anchors[masks[0]], Settings.settings_num_classes()))(output_0)
+        boxes_1 = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_boxes(x, anchors[masks[1]], Settings.settings_num_classes()))(output_1)
+        boxes_2 = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_boxes(x, anchors[masks[2]], Settings.settings_num_classes()))(output_2)
+        outputs = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_nms(x, anchors, masks, Settings.settings_num_classes()))(
+            (boxes_0[:3], boxes_1[:3], boxes_2[:3]))
+        return tf.keras.Model(inputs, outputs)
+
+    @staticmethod
+    def captcha_yolov3tiny(anchors, training=False):
+        anchors = YOLO_anchors.get_anchors() / 416
+        masks = np.array([[3, 4, 5], [0, 1, 2]])
+        x = inputs = tf.keras.layers.Input((IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNALS))
+        x_8, x = Yolov3_block.darknettiny(x)
+        x = Yolov3_block.yoloconv(256)(x)
+        output_0 = Yolov3_block.yolo_output(256, len(masks[0]), Settings.settings_num_classes())(x)
+        x = Yolov3_block.yoloconv(128)((x, x_8))
+        output_1 = Yolov3_block.yolo_output(128, len(masks[1]), Settings.settings_num_classes())(x)
+
+        if training:
+            return tf.keras.Model(inputs, (output_0, output_1))
+
+        boxes_0 = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_boxes(x, anchors[masks[0]], Settings.settings_num_classes()))(output_0)
+        boxes_1 = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_boxes(x, anchors[masks[1]], Settings.settings_num_classes()))(output_1)
+        outputs = tf.keras.layers.Lambda(
+            lambda x: Yolov3_losses.yolo_nms(x, anchors, masks, Settings.settings_num_classes()))(
+            (boxes_0[:3], boxes_1[:3]))
+        return tf.keras.Model(inputs, outputs)
 
 
 ## big(适合使用GPU训练)
@@ -8878,16 +9405,6 @@ class Models(object):
 #                                  compression_rate=0.5,
 #                                  drop_rate=0.5)
 
-# DIY
-# x = Lambda_Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
-# x = CBAM_ResNet.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
-# x = ResNext_squeeze.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
-# x = RES32_DETR.res32_detr(inputs)
-# x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-#                               compression_rate=0.5,
-#                               drop_rate=0.5)
 # Efficient_net_b0
 # x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
 # Efficient_net_b1
@@ -8930,6 +9447,18 @@ class Models(object):
 # x = SEResNet.SEResNet(inputs, block_num=[3, 4, 6, 3])
 # SEResNet152
 # x = SEResNet.SEResNet(inputs, block_num=[3, 8, 36, 3])
+
+# DIY
+# x = Lambda_Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
+#                                  compression_rate=0.5,
+#                                  drop_rate=0.5)
+# x = CBAM_ResNet.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
+# x = ResNext_squeeze.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
+# x = RES32_DETR.res32_detr(inputs)
+# x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
+#                               compression_rate=0.5,
+#                               drop_rate=0.5)
+# x = RegNet_Diy.regnet(inputs)
 
 ## small(适合使用CPU训练)
 # MobileNetV1
@@ -8982,14 +9511,14 @@ if __name__ == '__main__':
 """
 
 
-def move_path(work_path, project_name):
+def split_dataset(work_path, project_name):
     return f"""import random
 from {work_path}.{project_name}.settings import train_path
 from {work_path}.{project_name}.utils import Image_Processing
 
 train_image = Image_Processing.extraction_image(train_path)
 random.shuffle(train_image)
-Image_Processing.move_path(train_image)
+Image_Processing.split_dataset(train_image)
 
 """
 
@@ -9532,7 +10061,7 @@ else:
             batch_size=BATCH_SIZE).prefetch(
             buffer_size=BATCH_SIZE)
     if MODE == 'CTC_TINY':
-        model, c_callback = CallBack.callback(operator.methodcaller(MODEL, train=True)(Models))
+        model, c_callback = CallBack.callback(operator.methodcaller(MODEL, training=True)(Models))
     else:
         model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
 
@@ -9615,9 +10144,9 @@ class New_Work(object):
         with open(self.file_name('models.py'), 'w', encoding='utf-8') as f:
             f.write(models(self.work_parh, self.project_name))
 
-    def move_path(self):
-        with open(self.file_name('move_path.py'), 'w', encoding='utf-8') as f:
-            f.write(move_path(self.work_parh, self.project_name))
+    def split_dataset(self):
+        with open(self.file_name('split_dataset.py'), 'w', encoding='utf-8') as f:
+            f.write(split_dataset(self.work_parh, self.project_name))
 
     def pack_dataset(self):
         with open(self.file_name('pack_dataset.py'), 'w', encoding='utf-8') as f:
@@ -9653,7 +10182,7 @@ class New_Work(object):
         self.gen_sample_by_captcha()
         self.init_working_space()
         self.models()
-        self.move_path()
+        self.split_dataset()
         self.pack_dataset()
         self.save_model()
         self.settings()

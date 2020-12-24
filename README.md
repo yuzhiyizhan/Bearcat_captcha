@@ -39,7 +39,7 @@ IDE:pycharm
 ## 1.1 环境安装
 tennsorflow2.1无法使用CTC
 
-本项目在tensorflow2.2或2.3下面都可以运行(2.4未发布)
+本项目在tensorflow2.2或2.3下面都可以运行(2.4在踩坑中)
 
 两种版本的安装方法有少许区别下面详细说一下(windowns环境):
 
@@ -107,7 +107,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
     1.将一坨数据放到train_dataset文件夹(一坨指的是全部数据集在同一文件夹内)
 
-    2.运行move_path.py
+    2.运行split_dataset.py
 
 ### 如果你暂时没有数据,不用慌,先用生成的数据集吧
 
@@ -165,6 +165,8 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	运行test.py
 
 ### 第十步:开启后端
+
+	将训练好的模型放到App_model
 
     运行app.py
     
@@ -323,7 +325,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
     搭建模型网络，运行会生成model.png，展示模型的结构
 	需要安装graphviz，官网下载地址为[graphviz](http://www.graphviz.org/)
 	
-### move_path.py
+### split_dataset.py
 	区分数据集
 	
 ### num_classes.json
@@ -742,7 +744,7 @@ qq2387301977
 
 	修改置信度低于70%时，打印错误日志
 	
-	模型置信度过过低时，就算预测对了也是瞎蒙的
+	模型置信度过低时，就算预测对了也是瞎蒙的
 	
 	和考英语是一个道理
 	
@@ -755,7 +757,7 @@ qq2387301977
 验证的正确率很不错，测试时全错，或者正确率非常非常低
 
 ## 解决方法:
-模型有问题，推荐使用Densenet_169，ResNeXt101，SEResNet152
+模型有问题，推荐使用Densenet_169，RegNet50，SEResNet152
 模型在models.py的注释里面(注意，模型经过我的魔改)
 
 ## 错误二:
