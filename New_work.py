@@ -4963,7 +4963,7 @@ class Yolov3_losses(object):
         pred_box = tf.concat((box_xy, box_wh), axis=-1)  # original xywh for loss
         grid = tf.meshgrid(tf.range(grid_size[1]), tf.range(grid_size[0]))
         grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
-        box_xy = (box_xy + tf.cast(grid, tf.float32)) /                  tf.cast(grid_size, tf.float32)
+        box_xy = (box_xy + tf.cast(grid, tf.float32)) / tf.cast(grid_size, tf.float32)
         box_wh = tf.exp(box_wh) * anchors
         box_x1y1 = box_xy - box_wh / 2
         box_x2y2 = box_xy + box_wh / 2
@@ -5004,8 +5004,8 @@ class Yolov3_losses(object):
         int_h = tf.maximum(tf.minimum(box_1[..., 3], box_2[..., 3]) -
                            tf.maximum(box_1[..., 1], box_2[..., 1]), 0)
         int_area = int_w * int_h
-        box_1_area = (box_1[..., 2] - box_1[..., 0]) *                      (box_1[..., 3] - box_1[..., 1])
-        box_2_area = (box_2[..., 2] - box_2[..., 0]) *                      (box_2[..., 3] - box_2[..., 1])
+        box_1_area = (box_1[..., 2] - box_1[..., 0]) * (box_1[..., 3] - box_1[..., 1])
+        box_2_area = (box_2[..., 2] - box_2[..., 0]) * (box_2[..., 3] - box_2[..., 1])
         return int_area / (box_1_area + box_2_area - int_area)
 
     @staticmethod
@@ -5023,7 +5023,7 @@ class Yolov3_losses(object):
             grid_size = tf.shape(y_true)[1]
             grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
             grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)
-            true_xy = true_xy * tf.cast(grid_size, tf.float32) -                       tf.cast(grid, tf.float32)
+            true_xy = true_xy * tf.cast(grid_size, tf.float32) - tf.cast(grid, tf.float32)
             true_wh = tf.math.log(true_wh / anchors)
             true_wh = tf.where(tf.math.is_inf(true_wh),
                                tf.zeros_like(true_wh), true_wh)
@@ -5034,10 +5034,10 @@ class Yolov3_losses(object):
                 (pred_box, true_box, obj_mask),
                 tf.float32)
             ignore_mask = tf.cast(best_iou < ignore_thresh, tf.float32)
-            xy_loss = obj_mask * box_loss_scale *                       tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)
-            wh_loss = obj_mask * box_loss_scale *                       tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1)
+            xy_loss = obj_mask * box_loss_scale * tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)
+            wh_loss = obj_mask * box_loss_scale * tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1)
             obj_loss = tf.keras.losses.binary_crossentropy(true_obj, pred_obj)
-            obj_loss = obj_mask * obj_loss +                        (1 - obj_mask) * ignore_mask * obj_loss
+            obj_loss = obj_mask * obj_loss + (1 - obj_mask) * ignore_mask * obj_loss
             class_loss = obj_mask * tf.keras.losses.sparse_categorical_crossentropy(
                 true_class_idx, pred_class)
             xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))
@@ -9275,11 +9275,15 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = RES32_DETR.res32_detr(inputs)
+        # x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
+        #                               compression_rate=0.5,
+        #                               drop_rate=0.5)
+        x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
@@ -9498,6 +9502,39 @@ class Models(object):
 
 ## object_detection(目标检测)
 # x = Mobilenet_det.MobileNetV3Small(inputs)
+
+
+## tf.keras(加载imagenet权重，冻结部分层的权重可以加速训练并获得不错的效果)
+## tf2.3版本可用的模型
+# x = tf.keras.applications.MobileNet(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.NASNetLarge(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.NASNetMobile(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet50(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet50V2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet101(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet101V2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet152(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.ResNet152V2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.DenseNet121(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.DenseNet169(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.DenseNet201(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB0(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB1(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB3(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB4(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB5(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB6(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.EfficientNetB7(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.Xception(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.InceptionResNetV2(include_top=False, weights='imagenet')(inputs)
+# x = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')(inputs)
+
+
+## 冻结部分层的权重代码(模型编译前冻结即可)
+# for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
+
 
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
