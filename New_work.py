@@ -9262,6 +9262,7 @@ class Models(object):
         x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
                               compression_rate=0.5,
                               drop_rate=0.5)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
                                         activation=tf.keras.activations.softmax)(x)
         outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
