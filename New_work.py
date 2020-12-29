@@ -2780,6 +2780,7 @@ def models(work_path, project_name):
 import glob
 import math
 import json
+import copy
 import random
 import collections
 import numpy as np
@@ -5049,100 +5050,6 @@ class Yolov3_losses(object):
         return yolo_loss
 
 
-########################################
-# 分割线
-########################################
-
-
-########################################
-## 模型定义
-########################################
-
-
-# GhostNet
-class GhostNet(object):
-    @staticmethod
-    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
-
-        filters = input_tensor.get_shape().as_list()[channel_axis]
-        if input_type == '2d':
-            se_shape = (1, 1, filters)
-            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
-        elif input_type == '1d':
-            se_shape = (1, filters)
-            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
-        else:
-            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
-        se = tf.keras.layers.Reshape(se_shape)(se)
-        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
-            se)
-        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
-        x = tf.keras.layers.Multiply()([input_tensor, se])
-        return x
-
-    @staticmethod
-    def ghostnet(x):
-        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.Activation('relu')(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
-        x = tf.keras.layers.Conv2D(960, (1, 1), strides=(1, 1), padding='same', data_format='channels_last',
-                                   activation=None, use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.Activation('relu')(x)
-        x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.Activation('relu')(x)
-        return x
-
-    @staticmethod
-    def ghostnet_dy(x):
-        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(x)
-        x = FRN()(x)
-        x = DyReLU(16)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
-        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
-        x = tf.keras.layers.Conv2D(960, (1, 1), strides=(1, 1), padding='same', data_format='channels_last',
-                                   activation=None, use_bias=False)(x)
-        x = GhostNet._squeeze_excite_block(x)
-        x = FRN()(x)
-        x = DyReLU(960)(x)
-        x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
-        x = GhostNet._squeeze_excite_block(x)
-        x = FRN()(x)
-        x = DyReLU(1280)(x)
-        return x
-
-
 # Transformer
 class Transformer(tf.keras.Model):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
@@ -5164,6 +5071,16 @@ class Transformer(tf.keras.Model):
             tar, enc_output, look_ahead_mask, dec_padding_mask)
 
         return dec_output, attention_weights
+
+
+########################################
+# 分割线
+########################################
+
+
+########################################
+## 模型定义
+########################################
 
 
 class Yolo_model(object):
@@ -5409,2726 +5326,6 @@ class Yolo_tiny_model(object):
         return tf.keras.Model(inputs, [P5_output, P4_output])
 
 
-# RES34_DETR
-class RES32_DETR(object):
-    @staticmethod
-    def _make_stem(input_tensor, stem_width=64, deep_stem=False):
-        x = input_tensor
-        if deep_stem:
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=2,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=False, data_format='channels_last')(x)
-
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=1,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=False, data_format='channels_last')(x)
-
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-            x = tf.keras.layers.Conv2D(stem_width * 2, kernel_size=3, strides=1,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=False, data_format='channels_last')(x)
-
-            # x = BatchNormalization(axis=self.channel_axis,epsilon=1.001e-5)(x)
-            # x = Activation(self.active)(x)
-        else:
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=7, strides=2,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=False, data_format='channels_last')(x)
-            # x = BatchNormalization(axis=self.channel_axis,epsilon=1.001e-5)(x)
-            # x = Activation(self.active)(x)
-        return x
-
-    @staticmethod
-    def _rsoftmax(input_tensor, filters, radix, groups):
-        x = input_tensor
-        batch = x.shape[0]
-        if radix > 1:
-            x = tf.reshape(x, [-1, groups, radix, filters // groups])
-            x = tf.transpose(x, [0, 2, 1, 3])
-            x = tf.keras.activations.softmax(x, axis=1)
-            x = tf.reshape(x, [-1, 1, 1, radix * filters])
-        else:
-            x = tf.keras.layers.Activation('sigmoid')(x)
-        return x
-
-    @staticmethod
-    def _make_block_basic(input_tensor, filters=64, kernel_size=3, stride=1,
-                          conv_shortcut=True, mask=None):
-        x = input_tensor
-        preact = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        preact = tf.keras.layers.Activation('Mish_Activation')(preact)
-
-        if conv_shortcut is True:
-            shortcut = tf.keras.layers.Conv2D(filters, 1, strides=stride)(preact)
-        else:
-            shortcut = tf.keras.layers.MaxPooling2D(1, strides=stride)(x) if stride > 1 else x
-
-        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(preact)
-        x = tf.keras.layers.Conv2D(filters, kernel_size, strides=stride, use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
-        x = tf.keras.layers.Conv2D(filters, kernel_size, strides=1,
-                                   use_bias=False)(x)
-        x = tf.keras.layers.Add()([shortcut, x])
-        return x
-
-    @staticmethod
-    def _make_layer(input_tensor, filters=64, blocks=4, stride1=2, mask=None):
-        x = input_tensor
-        x = RES32_DETR._make_block_basic(x, filters, conv_shortcut=True)
-        for i in range(2, blocks):
-            x = RES32_DETR._make_block_basic(x, filters)
-        x = RES32_DETR._make_block_basic(x, filters, stride=stride1)
-        return x
-
-    @staticmethod
-    def get_trainable_parameter(shape=(100, 128)):
-        w_init = tf.random_normal_initializer()
-        parameter = tf.Variable(
-            initial_value=w_init(shape=shape,
-                                 dtype='float32'),
-            trainable=True)
-        return parameter
-
-    @staticmethod
-    def __make_transformer_top(x, hidden_dim, n_query_pos, nheads, num_encoder_layers, num_decoder_layers):
-
-        h = tf.keras.layers.Conv2D(hidden_dim, kernel_size=1, strides=1,
-                                   padding='same', kernel_initializer='he_normal',
-                                   use_bias=True, data_format='channels_last')(x)
-
-        H, W = h.shape[1], h.shape[2]
-        query_pos = RES32_DETR.get_trainable_parameter(shape=(n_query_pos, hidden_dim))
-        row_embed = RES32_DETR.get_trainable_parameter(shape=(100, hidden_dim // 2))
-        col_embed = RES32_DETR.get_trainable_parameter(shape=(100, hidden_dim // 2))
-
-        cat1_col = tf.expand_dims(col_embed[:W], 0)
-        cat1_col = tf.repeat(cat1_col, H, axis=0)
-        cat2_row = tf.expand_dims(row_embed[:H], 1)
-        cat2_row = tf.repeat(cat2_row, W, axis=1)
-        pos = tf.concat([cat1_col, cat2_row], axis=-1)
-
-        pos = tf.expand_dims(tf.reshape(pos, [pos.shape[0] * pos.shape[1], -1]), 0)
-
-        h = tf.reshape(h, [-1, h.shape[1] * h.shape[2], h.shape[3]])
-        temp_input = pos + h
-
-        h_tag = tf.transpose(h, perm=[0, 2, 1])
-        h_tag = tf.keras.layers.Conv1D(query_pos.shape[0], kernel_size=1, strides=1,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=True, data_format='channels_last')(h_tag)
-
-        h_tag = tf.transpose(h_tag, perm=[0, 2, 1])
-        query_pos = tf.expand_dims(query_pos, 0)
-        query_pos += h_tag
-        query_pos -= h_tag
-
-        transformer = Transformer(
-            d_model=hidden_dim, nhead=nheads, num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers)
-        atten_out, attention_weights = transformer(temp_input, query_pos)
-        return atten_out
-
-    @staticmethod
-    def res32_detr(x, dropout_rate=0.2, fc_activation=None, using_transformer=True, using_cb=None, hidden_dim=512,
-                   nheads=8, num_encoder_layers=6, num_decoder_layers=6, n_query_pos=100):
-        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(x)
-        x = tf.keras.layers.Conv2D(64, kernel_size=7, strides=2,
-                                   padding='same', kernel_initializer='he_normal',
-                                   use_bias=True, data_format='channels_last')(x)
-
-        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
-        x = tf.keras.layers.MaxPooling2D(3, strides=2)(x)
-
-        x = RES32_DETR._make_layer(x, filters=64, blocks=3)
-
-        x = RES32_DETR._make_layer(x, filters=128, blocks=4)
-
-        x = RES32_DETR._make_layer(x, filters=256, blocks=6)
-
-        x = RES32_DETR._make_layer(x, filters=512, blocks=3, stride1=1)
-
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        if using_transformer:
-            x = RES32_DETR.__make_transformer_top(x, hidden_dim, n_query_pos, nheads, num_encoder_layers,
-                                                  num_decoder_layers)
-
-        if dropout_rate > 0:
-            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
-        if using_transformer:
-            x = tf.expand_dims(x, 1)
-        # fc_out = tf.keras.layers.Dense(self.n_classes, kernel_initializer='he_normal', use_bias=False)(x)
-        # if self.using_transformer:
-        #     fc_out = tf.reduce_sum(fc_out, 1)
-        # if self.fc_activation:
-        #     fc_out = tf.keras.layers.Activation(self.fc_activation)(fc_out)
-        return x
-
-
-# ResNest
-class ResNest(object):
-
-    @staticmethod
-    def _make_stem(input_tensor, stem_width=64, deep_stem=False):
-        x = input_tensor
-        if deep_stem:
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=2, padding="same",
-                                       kernel_initializer="he_normal",
-                                       use_bias=False, data_format="channels_last")(x)
-
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=1, padding="same",
-                                       kernel_initializer="he_normal", use_bias=False, data_format="channels_last")(x)
-
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-            x = tf.keras.layers.Conv2D(stem_width * 2, kernel_size=3, strides=1, padding="same",
-                                       kernel_initializer="he_normal",
-                                       use_bias=False, data_format="channels_last")(x)
-
-        else:
-            x = tf.keras.layers.Conv2D(stem_width, kernel_size=7, strides=2, padding="same",
-                                       kernel_initializer="he_normal",
-                                       use_bias=False, data_format="channels_last")(x)
-        return x
-
-    @staticmethod
-    def _rsoftmax(input_tensor, filters, radix, groups):
-        x = input_tensor
-        batch = x.shape[0]
-        if radix > 1:
-            x = tf.reshape(x, [-1, groups, radix, filters // groups])
-            x = tf.transpose(x, [0, 2, 1, 3])
-            x = tf.keras.activations.softmax(x, axis=1)
-            x = tf.reshape(x, [-1, 1, 1, radix * filters])
-        else:
-            x = tf.keras.layers.Activation("sigmoid")(x)
-        return x
-
-    @staticmethod
-    def _SplAtConv2d(input_tensor, filters=64, kernel_size=3, stride=1, dilation=1, groups=1, radix=0):
-        x = input_tensor
-        in_channels = input_tensor.shape[-1]
-
-        x = GroupedConv2D(filters=filters * radix, kernel_size=[kernel_size for i in range(groups * radix)],
-                          use_keras=True, padding="same", kernel_initializer="he_normal", use_bias=False,
-                          data_format="channels_last", dilation_rate=dilation)(x)
-
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        batch, rchannel = x.shape[0], x.shape[-1]
-        if radix > 1:
-            splited = tf.split(x, radix, axis=-1)
-            gap = sum(splited)
-        else:
-            gap = x
-
-        # print('sum',gap.shape)
-        gap = tf.keras.layers.GlobalAveragePooling2D(data_format="channels_last")(gap)
-        gap = tf.reshape(gap, [-1, 1, 1, filters])
-        # print('adaptive_avg_pool2d',gap.shape)
-
-        reduction_factor = 4
-        inter_channels = max(in_channels * radix // reduction_factor, 32)
-
-        x = tf.keras.layers.Conv2D(inter_channels, kernel_size=1)(gap)
-
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = tf.keras.layers.Conv2D(filters * radix, kernel_size=1)(x)
-
-        atten = ResNest._rsoftmax(x, filters, radix, groups)
-
-        if radix > 1:
-            logits = tf.split(atten, radix, axis=-1)
-            out = sum([a * b for a, b in zip(splited, logits)])
-        else:
-            out = atten * x
-        return out
-
-    @staticmethod
-    def _make_block(input_tensor, first_block=True, filters=64, stride=2, radix=1, avd=False, avd_first=False,
-                    is_first=False, block_expansion=4, avg_down=True, dilation=1, bottleneck_width=64, cardinality=1):
-        x = input_tensor
-        inplanes = input_tensor.shape[-1]
-        if stride != 1 or inplanes != filters * block_expansion:
-            short_cut = input_tensor
-            if avg_down:
-                if dilation == 1:
-                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=stride, strides=stride, padding="same",
-                                                                 data_format="channels_last")(
-                        short_cut
-                    )
-                else:
-                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=1, strides=1, padding="same",
-                                                                 data_format="channels_last")(
-                        short_cut)
-                short_cut = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=1, padding="same",
-                                                   kernel_initializer="he_normal", use_bias=False,
-                                                   data_format="channels_last")(
-                    short_cut)
-            else:
-                short_cut = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=stride,
-                                                   padding="same",
-                                                   kernel_initializer="he_normal", use_bias=False,
-                                                   data_format="channels_last")(
-                    short_cut)
-
-            short_cut = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(short_cut)
-        else:
-            short_cut = input_tensor
-
-        group_width = int(filters * (bottleneck_width / 64.0)) * cardinality
-        x = tf.keras.layers.Conv2D(group_width, kernel_size=1, strides=1, padding="same",
-                                   kernel_initializer="he_normal",
-                                   use_bias=False,
-                                   data_format="channels_last")(x)
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        avd = avd and (stride > 1 or is_first)
-        avd_first = avd_first
-
-        if avd:
-            avd_layer = tf.keras.layers.AveragePooling2D(pool_size=3, strides=stride, padding="same",
-                                                         data_format="channels_last")
-            stride = 1
-
-        if avd and avd_first:
-            x = avd_layer(x)
-
-        if radix >= 1:
-            x = ResNest._SplAtConv2d(x, filters=group_width, kernel_size=3, stride=stride, dilation=dilation,
-                                     groups=cardinality, radix=radix)
-        else:
-            x = tf.keras.layers.Conv2D(group_width, kernel_size=3, strides=stride, padding="same",
-                                       kernel_initializer="he_normal",
-                                       dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        if avd and not avd_first:
-            x = avd_layer(x)
-            # print('can')
-        x = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=1, padding="same",
-                                   kernel_initializer="he_normal",
-                                   dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-
-        m2 = tf.keras.layers.Add()([x, short_cut])
-        m2 = tf.keras.layers.Activation('Mish_Activation')(m2)
-        return m2
-
-    @staticmethod
-    def _make_block_basic(input_tensor, first_block=True, filters=64, stride=2, radix=1, avd=False, avd_first=False,
-                          is_first=False, block_expansion=4, avg_down=True, dilation=1, bottleneck_width=64,
-                          cardinality=1):
-        x = input_tensor
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        short_cut = x
-        inplanes = input_tensor.shape[-1]
-        if stride != 1 or inplanes != filters * block_expansion:
-            if avg_down:
-                if dilation == 1:
-                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=stride, strides=stride, padding="same",
-                                                                 data_format="channels_last")(
-                        short_cut
-                    )
-                else:
-                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=1, strides=1, padding="same",
-                                                                 data_format="channels_last")(
-                        short_cut)
-                short_cut = tf.keras.layers.Conv2D(filters, kernel_size=1, strides=1, padding="same",
-                                                   kernel_initializer="he_normal",
-                                                   use_bias=False, data_format="channels_last")(short_cut)
-            else:
-                short_cut = tf.keras.layers.Conv2D(filters, kernel_size=1, strides=stride, padding="same",
-                                                   kernel_initializer="he_normal",
-                                                   use_bias=False, data_format="channels_last")(short_cut)
-
-        group_width = int(filters * (bottleneck_width / 64.0)) * cardinality
-        avd = avd and (stride > 1 or is_first)
-        avd_first = avd_first
-
-        if avd:
-            avd_layer = tf.keras.layers.AveragePooling2D(pool_size=3, strides=stride, padding="same",
-                                                         data_format="channels_last")
-            stride = 1
-
-        if avd and avd_first:
-            x = avd_layer(x)
-
-        if radix >= 1:
-            x = ResNest._SplAtConv2d(x, filters=group_width, kernel_size=3, stride=stride, dilation=dilation,
-                                     groups=cardinality, radix=radix)
-        else:
-            x = tf.keras.layers.Conv2D(filters, kernel_size=3, strides=stride, padding="same",
-                                       kernel_initializer="he_normal",
-                                       dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
-
-        if avd and not avd_first:
-            x = avd_layer(x)
-
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = tf.keras.layers.Conv2D(filters, kernel_size=3, strides=1, padding="same", kernel_initializer="he_normal",
-                                   dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
-        m2 = tf.keras.layers.Add()([x, short_cut])
-        return m2
-
-    @staticmethod
-    def _make_layer(input_tensor, blocks=4, filters=64, stride=2, is_first=True, using_basic_block=False,
-                    avd=True, radix=2, avd_first=False):
-        x = input_tensor
-        if using_basic_block is True:
-            x = ResNest._make_block_basic(x, first_block=True, filters=filters, stride=stride, radix=radix,
-                                          avd=avd, avd_first=avd_first, is_first=is_first)
-
-            for i in range(1, blocks):
-                x = ResNest._make_block_basic(
-                    x, first_block=False, filters=filters, stride=1, radix=radix, avd=avd,
-                    avd_first=avd_first
-                )
-
-        elif using_basic_block is False:
-            x = ResNest._make_block(x, first_block=True, filters=filters, stride=stride, radix=radix, avd=avd,
-                                    avd_first=avd_first, is_first=is_first)
-
-            for i in range(1, blocks):
-                x = ResNest._make_block(
-                    x, first_block=False, filters=filters, stride=1, radix=radix, avd=avd,
-                    avd_first=avd_first)
-        return x
-
-    @staticmethod
-    def _make_Composite_layer(input_tensor, filters=256, kernel_size=1, stride=1, upsample=True):
-        x = input_tensor
-        x = tf.keras.layers.Conv2D(filters, kernel_size, strides=stride, use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-        if upsample:
-            x = tf.keras.layers.UpSampling2D(size=2)(x)
-        return x
-
-    @staticmethod
-    def get_trainable_parameter(shape=(100, 128)):
-        w_init = tf.random_normal_initializer()
-        parameter = tf.Variable(
-            initial_value=w_init(shape=shape,
-                                 dtype='float32'),
-            trainable=True)
-        return parameter
-
-    @staticmethod
-    def __make_transformer_top(x, hidden_dim=512, n_query_pos=100, nheads=8, num_encoder_layers=6,
-                               num_decoder_layers=6):
-        h = tf.keras.layers.Conv2D(hidden_dim, kernel_size=1, strides=1,
-                                   padding='same', kernel_initializer='he_normal',
-                                   use_bias=True, data_format='channels_last')(x)
-        H, W = h.shape[1], h.shape[2]
-
-        query_pos = ResNest.get_trainable_parameter(shape=(n_query_pos, hidden_dim))
-        row_embed = ResNest.get_trainable_parameter(shape=(100, hidden_dim // 2))
-        col_embed = ResNest.get_trainable_parameter(shape=(100, hidden_dim // 2))
-
-        cat1_col = tf.expand_dims(col_embed[:W], 0)
-        cat1_col = tf.repeat(cat1_col, H, axis=0)
-
-        cat2_row = tf.expand_dims(row_embed[:H], 1)
-        cat2_row = tf.repeat(cat2_row, W, axis=1)
-        pos = tf.concat([cat1_col, cat2_row], axis=-1)
-        pos = tf.expand_dims(tf.reshape(pos, [pos.shape[0] * pos.shape[1], -1]), 0)
-        h = tf.reshape(h, [-1, h.shape[1] * h.shape[2], h.shape[3]])
-        temp_input = pos + h
-
-        h_tag = tf.transpose(h, perm=[0, 2, 1])
-
-        h_tag = tf.keras.layers.Conv1D(query_pos.shape[0], kernel_size=1, strides=1,
-                                       padding='same', kernel_initializer='he_normal',
-                                       use_bias=True, data_format='channels_last')(h_tag)
-
-        h_tag = tf.transpose(h_tag, perm=[0, 2, 1])
-
-        query_pos = tf.expand_dims(query_pos, 0)
-
-        query_pos += h_tag
-        query_pos -= h_tag
-
-        transformer = Transformer(
-            d_model=hidden_dim, nhead=nheads, num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers)
-        atten_out, attention_weights = transformer(temp_input, query_pos)
-        return atten_out
-
-    @staticmethod
-    def resnest(x, dropout_rate=0.2, fc_activation=None, blocks_set=[3, 4, 6, 3], radix=2, groups=1,
-                bottleneck_width=64, deep_stem=True, stem_width=32, block_expansion=4, avg_down=True, avd=True,
-                avd_first=False, preact=False, using_basic_block=False, using_cb=False, using_transformer=True,
-                hidden_dim=512, nheads=8, num_encoder_layers=6, num_decoder_layers=6, n_query_pos=100):
-
-        x = ResNest._make_stem(x, stem_width=stem_width, deep_stem=deep_stem)
-
-        if preact is False:
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding="same", data_format="channels_last")(x)
-
-        if preact is True:
-            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        if using_cb:
-            second_x = x
-            second_x = ResNest._make_layer(x, blocks=blocks_set[0], filters=64, stride=1, is_first=False,
-                                           using_basic_block=using_basic_block, avd=avd, radix=radix,
-                                           avd_first=avd_first)
-            second_x_tmp = ResNest._make_Composite_layer(second_x, filters=x.shape[-1], upsample=False)
-
-            x = tf.keras.layers.Add()([second_x_tmp, x])
-        x = ResNest._make_layer(x, blocks=blocks_set[0], filters=64, stride=1, is_first=False,
-                                using_basic_block=using_basic_block, avd=avd, radix=radix,
-                                avd_first=avd_first)
-
-        b1_b3_filters = [64, 128, 256, 512]
-        for i in range(3):
-            idx = i + 1
-            if using_cb:
-                second_x = ResNest._make_layer(x, blocks=blocks_set[idx], filters=b1_b3_filters[idx], stride=2,
-                                               using_basic_block=using_basic_block, avd=avd, radix=radix,
-                                               avd_first=avd_first)
-                second_x_tmp = ResNest._make_Composite_layer(second_x, filters=x.shape[-1])
-
-                x = tf.keras.layers.Add()([second_x_tmp, x])
-            x = ResNest._make_layer(x, blocks=blocks_set[idx], filters=b1_b3_filters[idx], stride=2, is_first=False,
-                                    using_basic_block=using_basic_block, avd=avd, radix=radix,
-                                    avd_first=avd_first)
-
-        if using_transformer:
-            x = ResNest.__make_transformer_top(x, hidden_dim=hidden_dim, n_query_pos=n_query_pos, nheads=nheads,
-                                               num_encoder_layers=num_encoder_layers,
-                                               num_decoder_layers=num_decoder_layers)
-
-        else:
-            x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)
-
-        if dropout_rate > 0:
-            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
-
-        if fc_activation:
-            x = tf.keras.layers.Activation('Mish_Activation')(x)
-        if using_transformer:
-            x = tf.expand_dims(x, axis=1)
-
-        return x
-
-
-# RegNet
-class RegNet(object):
-
-    @staticmethod
-    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
-
-        filters = input_tensor.get_shape().as_list()[channel_axis]
-        if input_type == '2d':
-            se_shape = (1, 1, filters)
-            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
-        elif input_type == '1d':
-            se_shape = (1, filters)
-            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
-        else:
-            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
-        se = tf.keras.layers.Reshape(se_shape)(se)
-        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
-            se)
-        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
-        x = tf.keras.layers.Multiply()([input_tensor, se])
-        return x
-
-    @staticmethod
-    def _make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
-        x = input_tensor
-        if SEstyle_atten == 'SE':
-            x = RegNet._squeeze_excite_block(x, input_type=input_type)
-        return x
-
-    @staticmethod
-    def _make_dropout(input_tensor, dropout_range=[0.2, 0.4]):
-        x = input_tensor
-        rate = random.uniform(dropout_range[0], dropout_range[1])
-        random_seed = random.randint(0, 5000)
-        x = tf.keras.layers.Dropout(rate, noise_shape=None, seed=random_seed)(x)
-        return x
-
-    @staticmethod
-    def _make_stem(input_tensor, filters=32, size=(7, 7), strides=2, channel_axis=-1,
-                   active='relu'):
-        x = input_tensor
-        x = tf.keras.layers.Conv2D(filters, kernel_size=size, strides=strides,
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-        x = tf.keras.layers.Activation(active)(x)
-        return x
-
-    @staticmethod
-    def _make_basic_131_block(input_tensor,
-                              filters=96,
-                              group_kernel_size=[3, 3, 3],
-                              filters_per_group=48,
-                              stridess=[1, 2, 1], channel_axis=-1, active='relu'):
-
-        x2 = tf.identity(input_tensor)
-        if 2 in stridess:
-            x2 = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1),
-                                        strides=2,
-                                        padding='same',
-                                        kernel_initializer='he_normal',
-                                        use_bias=False,
-                                        data_format='channels_last')(x2)
-            x2 = tf.keras.layers.BatchNormalization(axis=channel_axis)(x2)
-            x2 = tf.keras.layers.Activation(active)(x2)
-        x = input_tensor
-        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
-                                   strides=stridess[0],
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-        x = tf.keras.layers.Activation(active)(x)
-        x = GroupedConv2D(filters=filters, kernel_size=group_kernel_size, strides=stridess[1],
-                          use_keras=True, padding='same', kernel_initializer='he_normal',
-                          use_bias=False, data_format='channels_last')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-        x = tf.keras.layers.Activation(active)(x)
-
-        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
-                                   strides=stridess[2],
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-        x = tf.keras.layers.Activation(active)(x)
-        x = RegNet._make_attention(x, input_type='2d')
-        m2 = tf.keras.layers.Add()([x, x2])
-        return m2
-
-    @staticmethod
-    def _make_stage(input_tensor,
-                    n_block=2,
-                    block_width=96,
-                    group_G=48):
-        x = input_tensor
-        x = RegNet._make_basic_131_block(x,
-                                         filters=block_width,
-                                         filters_per_group=group_G,
-                                         stridess=[1, 2, 1])
-        for i in range(1, n_block):
-            x = RegNet._make_basic_131_block(x,
-                                             filters=block_width,
-                                             filters_per_group=group_G,
-                                             stridess=[1, 1, 1])
-        return x
-
-    @staticmethod
-    def regnet(x, active='relu', dropout_rate=0.2, fc_activation=None, stem_set=48, stage_depth=[2, 6, 17, 2],
-               stage_width=[48, 120, 336, 888], stage_G=24, SEstyle_atten="SE", using_cb=False):
-        x = RegNet._make_stem(x, filters=stem_set, size=(3, 3), strides=2, active=active)
-        for i in range(len(stage_depth)):
-            depth = stage_depth[i]
-            width = stage_width[i]
-            group_G = stage_G
-            x = RegNet._make_stage(x, n_block=depth,
-                                   block_width=width,
-                                   group_G=group_G)
-
-        if dropout_rate > 0:
-            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
-        if fc_activation:
-            x = tf.keras.layers.Activation(fc_activation)(x)
-        return x
-
-
-class RegNet_Diy(object):
-
-    @staticmethod
-    def _squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
-
-        filters = input_tensor.get_shape().as_list()[channel_axis]
-        if input_type == '2d':
-            se_shape = (1, 1, filters)
-            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
-        elif input_type == '1d':
-            se_shape = (1, filters)
-            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
-        else:
-            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
-        se = tf.keras.layers.Reshape(se_shape)(se)
-        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
-            se)
-        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
-        x = tf.keras.layers.Multiply()([input_tensor, se])
-        return x
-
-    @staticmethod
-    def _make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
-        x = input_tensor
-        if SEstyle_atten == 'SE':
-            x = RegNet_Diy._squeeze_excite_block(x, input_type=input_type)
-        return x
-
-    @staticmethod
-    def _make_dropout(input_tensor, dropout_range=[0.2, 0.4]):
-        x = input_tensor
-        rate = random.uniform(dropout_range[0], dropout_range[1])
-        random_seed = random.randint(0, 5000)
-        x = tf.keras.layers.Dropout(rate, noise_shape=None, seed=random_seed)(x)
-        return x
-
-    @staticmethod
-    def _make_stem(input_tensor, filters=32, size=(7, 7), strides=2, channel_axis=-1,
-                   active='relu'):
-        x = input_tensor
-        x = tf.keras.layers.Conv2D(filters, kernel_size=size, strides=strides,
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        x = FRN()(x)
-        x = DyReLU(filters)(x)
-        x = tf.keras.layers.GaussianNoise(0.5)(x)
-        x = RegNet_Diy._squeeze_excite_block(x)
-        return x
-
-    @staticmethod
-    def _make_basic_131_block(input_tensor,
-                              filters=96,
-                              group_kernel_size=[3, 3, 3],
-                              filters_per_group=48,
-                              stridess=[1, 2, 1], channel_axis=-1, active='relu'):
-
-        x2 = tf.identity(input_tensor)
-        if 2 in stridess:
-            x2 = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1),
-                                        strides=2,
-                                        padding='same',
-                                        kernel_initializer='he_normal',
-                                        use_bias=False,
-                                        data_format='channels_last')(x2)
-            # x2 = SCConv(filters)(x2)
-            x2 = FRN()(x2)
-            x2 = DyReLU(filters)(x2)
-            x2 = tf.keras.layers.GaussianNoise(0.5)(x2)
-            x2 = RegNet_Diy._squeeze_excite_block(x2)
-        x = input_tensor
-        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
-                                   strides=stridess[0],
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        # x = SCConv(filters)(x)
-        x = FRN()(x)
-        x = DyReLU(filters)(x)
-        x = tf.keras.layers.GaussianNoise(0.5)(x)
-        x = RegNet_Diy._squeeze_excite_block(x)
-        x = GroupedConv2D(filters=filters, kernel_size=group_kernel_size, strides=stridess[1],
-                          use_keras=True, padding='same', kernel_initializer='he_normal',
-                          use_bias=False, data_format='channels_last')(x)
-        x = FRN()(x)
-        x = DyReLU(filters)(x)
-        x = tf.keras.layers.GaussianNoise(0.5)(x)
-        x = RegNet_Diy._squeeze_excite_block(x)
-        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
-                                   strides=stridess[2],
-                                   padding='same',
-                                   kernel_initializer='he_normal',
-                                   use_bias=False,
-                                   data_format='channels_last')(x)
-        x = FRN()(x)
-        x = DyReLU(filters)(x)
-        x = tf.keras.layers.GaussianNoise(0.5)(x)
-        x = RegNet_Diy._make_attention(x, input_type='2d')
-        m2 = tf.keras.layers.Add()([x, x2])
-        return m2
-
-    @staticmethod
-    def _make_stage(input_tensor,
-                    n_block=2,
-                    block_width=96,
-                    group_G=48):
-        x = input_tensor
-        x = RegNet_Diy._make_basic_131_block(x,
-                                             filters=block_width,
-                                             filters_per_group=group_G,
-                                             stridess=[1, 2, 1])
-        for i in range(1, n_block):
-            x = RegNet_Diy._make_basic_131_block(x,
-                                                 filters=block_width,
-                                                 filters_per_group=group_G,
-                                                 stridess=[1, 1, 1])
-        return x
-
-    @staticmethod
-    def regnet(x, active='relu', dropout_rate=0.2, fc_activation=None, stem_set=48, stage_depth=[2, 6, 17, 2],
-               stage_width=[48, 120, 336, 888], stage_G=24, SEstyle_atten="SE", using_cb=False):
-        x = RegNet_Diy._make_stem(x, filters=stem_set, size=(3, 3), strides=2, active=active)
-        for i in range(len(stage_depth)):
-            depth = stage_depth[i]
-            width = stage_width[i]
-            group_G = stage_G
-            x = RegNet_Diy._make_stage(x, n_block=depth,
-                                       block_width=width,
-                                       group_G=group_G)
-
-        if dropout_rate > 0:
-            x = tf.keras.layers.GaussianNoise(dropout_rate)(x)
-        if fc_activation:
-            x = tf.keras.layers.Activation(fc_activation)(x)
-        return x
-
-
-# inception
-class Inception(object):
-    @staticmethod
-    def BasicConv2D(inputs, filters, kernel_size, strides, padding, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=kernel_size,
-                                   strides=strides,
-                                   padding=padding, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.nn.swish(x)
-        return x
-
-    @staticmethod
-    def Conv2DLinear(inputs, filters, kernel_size, strides, padding, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=kernel_size,
-                                   strides=strides,
-                                   padding=padding, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        return x
-
-    @staticmethod
-    def Stem(inputs, training=None, **kwargs):
-        x = Inception.BasicConv2D(inputs, filters=32,
-                                  kernel_size=(3, 3),
-                                  strides=2,
-                                  padding='same', training=training)
-        x = Inception.BasicConv2D(x, filters=32,
-                                  kernel_size=(3, 3),
-                                  strides=1,
-                                  padding='same', training=training)
-        x = Inception.BasicConv2D(x, filters=64,
-                                  kernel_size=(3, 3),
-                                  strides=1,
-                                  padding='same', training=training)
-        branch_1 = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                             strides=2,
-                                             padding="same")(x)
-        branch_2 = Inception.BasicConv2D(x, filters=96,
-                                         kernel_size=(3, 3),
-                                         strides=2,
-                                         padding="same", training=training)
-        x = tf.concat(values=[branch_1, branch_2], axis=-1)
-        branch_3 = Inception.BasicConv2D(x, filters=64,
-                                         kernel_size=(1, 1),
-                                         strides=1,
-                                         padding="same", training=training)
-        branch_3 = Inception.BasicConv2D(branch_3, filters=96,
-                                         kernel_size=(3, 3),
-                                         strides=1,
-                                         padding="same", training=training)
-        branch_4 = Inception.BasicConv2D(x, filters=64,
-                                         kernel_size=(1, 1),
-                                         strides=1,
-                                         padding="same", training=training)
-        branch_4 = Inception.BasicConv2D(branch_4, filters=64,
-                                         kernel_size=(7, 1),
-                                         strides=1,
-                                         padding="same", training=training)
-        branch_4 = Inception.BasicConv2D(branch_4, filters=64,
-                                         kernel_size=(1, 7),
-                                         strides=1,
-                                         padding="same", training=training)
-        branch_4 = Inception.BasicConv2D(branch_4, filters=96,
-                                         kernel_size=(3, 3),
-                                         strides=1,
-                                         padding="same", training=training)
-        x = tf.concat(values=[branch_3, branch_4], axis=-1)
-        branch_5 = Inception.BasicConv2D(x, filters=192,
-                                         kernel_size=(3, 3),
-                                         strides=2,
-                                         padding="same", training=training)
-        branch_6 = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                             strides=2,
-                                             padding="same")(x)
-        return tf.concat(values=[branch_5, branch_6], axis=-1)
-
-    @staticmethod
-    def ReductionA(inputs, k, l, m, n, training=None, **kwargs):
-        b1 = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                       strides=2,
-                                       padding="same")(inputs)
-        b2 = Inception.BasicConv2D(inputs, filters=n,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(inputs, filters=k,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(b3, filters=l,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(b3, filters=m,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", training=training)
-        return tf.concat(values=[b1, b2, b3], axis=-1)
-
-    @staticmethod
-    def InceptionResNetA(inputs, training=None, **kwargs):
-        b1 = Inception.BasicConv2D(inputs, filters=32,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(inputs, filters=32,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(inputs, filters=32,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(b3, filters=48,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(b3, filters=64,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        x = tf.concat(values=[b1, b2, b3], axis=-1)
-        x = Inception.Conv2DLinear(x, filters=384,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        output = tf.keras.layers.add([x, inputs])
-        return tf.nn.swish(output)
-
-    @staticmethod
-    def InceptionResNetB(inputs, training=None, **kwargs):
-        b1 = Inception.BasicConv2D(inputs, filters=192,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(inputs, filters=128,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=160,
-                                   kernel_size=(1, 7),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=192,
-                                   kernel_size=(7, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        x = tf.concat(values=[b1, b2], axis=-1)
-        x = Inception.Conv2DLinear(x, filters=1152,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        output = tf.keras.layers.add([x, inputs])
-        return tf.nn.swish(output)
-
-    @staticmethod
-    def InceptionResNetC(inputs, training=None, **kwargs):
-        b1 = Inception.BasicConv2D(inputs, filters=192,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(inputs, filters=192,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=224,
-                                   kernel_size=(1, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=256,
-                                   kernel_size=(3, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        x = tf.concat(values=[b1, b2], axis=-1)
-        x = Inception.Conv2DLinear(x, filters=2144,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        output = tf.keras.layers.add([x, inputs])
-        return tf.nn.swish(output)
-
-    @staticmethod
-    def ReductionB(inputs, training=None, **kwargs):
-        b1 = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                       strides=2,
-                                       padding="same")(inputs)
-        b2 = Inception.BasicConv2D(inputs, filters=256,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b2 = Inception.BasicConv2D(b2, filters=384,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(inputs, filters=256,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b3 = Inception.BasicConv2D(b3, filters=288,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", training=training)
-        b4 = Inception.BasicConv2D(inputs, filters=256,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", training=training)
-        b4 = Inception.BasicConv2D(b4, filters=288,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", training=training)
-        b4 = Inception.BasicConv2D(b4, filters=320,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", training=training)
-        return tf.concat(values=[b1, b2, b3, b4], axis=-1)
-
-    @staticmethod
-    def build_inception_resnet_a(x, n):
-        for _ in range(n):
-            x = Inception.InceptionResNetA(x)
-        return x
-
-    @staticmethod
-    def build_inception_resnet_b(x, n):
-        for _ in range(n):
-            x = Inception.InceptionResNetB(x)
-        return x
-
-    @staticmethod
-    def build_inception_resnet_c(x, n):
-        for _ in range(n):
-            x = Inception.InceptionResNetC(x)
-        return x
-
-    @staticmethod
-    def InceptionResNetV2(x, training=None, mask=None):
-
-        x = Inception.Stem(x)
-        x = Inception.build_inception_resnet_a(x, 5)
-        x = Inception.ReductionA(x, k=256, l=256, m=384, n=384)
-        x = Inception.build_inception_resnet_b(x, 10)
-        x = Inception.ReductionB(x)
-        x = Inception.build_inception_resnet_c(x, 5)
-        return x
-
-
-# densenet
-class Densenet(object):
-
-    @staticmethod
-    def densenet_bottleneck(inputs, growth_rate, drop_rate, training=None, **kwargs):
-        x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-
-        x = tf.keras.layers.Conv2D(filters=4 * growth_rate,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = tf.keras.layers.Conv2D(filters=growth_rate,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        # x = tf.keras.layers.Dropout(rate=drop_rate)(x)
-        # x = tf.keras.layers.GaussianDropout(rate=drop_rate)(x)
-        x = tf.keras.layers.GaussianNoise(stddev=drop_rate)(x)
-        # x = DropBlock(drop_rate=drop_rate)(x)
-        return x
-
-    @staticmethod
-    def densenet_denseblock(inputs, num_layers, growth_rate, drop_rate, training=None, **kwargs):
-        features_list = []
-        features_list.append(inputs)
-        x = inputs
-        for _ in range(num_layers):
-            y = Densenet.densenet_bottleneck(x, growth_rate=growth_rate, drop_rate=drop_rate, training=training)
-            features_list.append(y)
-            x = tf.concat(features_list, axis=-1)
-        features_list.clear()
-        return x
-
-    @staticmethod
-    def densenet_transitionlayer(inputs, out_channels, training=None, **kwargs):
-        x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=out_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2),
-                                      strides=2,
-                                      padding="same")(x)
-        return x
-
-    @staticmethod
-    def Densenet(x, num_init_features, growth_rate, block_layers, compression_rate, drop_rate, training=None,
-                 mask=None):
-        x = tf.keras.layers.Conv2D(filters=num_init_features,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        num_channels = num_init_features
-        x = Densenet.densenet_denseblock(x, num_layers=block_layers[0], growth_rate=growth_rate, drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[0]
-
-        num_channels = compression_rate * num_channels
-        x = Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet.densenet_denseblock(x, num_layers=block_layers[1], growth_rate=growth_rate, drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[1]
-        num_channels = compression_rate * num_channels
-        x = Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet.densenet_denseblock(x, num_layers=block_layers[2], growth_rate=growth_rate, drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[2]
-        num_channels = compression_rate * num_channels
-        # x = Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet.densenet_denseblock(x, num_layers=block_layers[3], growth_rate=growth_rate, drop_rate=drop_rate)
-        return x
-
-
-class Densenet_squeeze(object):
-    @staticmethod
-    def squeeze(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = tf.nn.sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = tf.keras.layers.multiply(inputs=[inputs, x])
-        return output
-
-    @staticmethod
-    def densenet_bottleneck(inputs, growth_rate, drop_rate, training=None, **kwargs):
-        # x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        # x = tf.nn.swish(x)
-        x = FRN()(inputs)
-        # x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = DyReLU(growth_rate)(x)
-        x = tf.keras.layers.Conv2D(filters=4 * growth_rate,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = DyReLU(4 * growth_rate)(x)
-        # x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = Densenet_squeeze.squeeze(x, 4 * growth_rate)
-        x = tf.keras.layers.Conv2D(filters=growth_rate,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        # x = tf.keras.layers.Dropout(rate=drop_rate)(x)
-        # x = tf.keras.layers.GaussianDropout(rate=drop_rate)(x)
-        x = Densenet_squeeze.squeeze(x, growth_rate)
-        x = tf.keras.layers.GaussianNoise(stddev=drop_rate)(x)
-        # x = DropBlock(drop_rate=drop_rate)(x)
-        return x
-
-    @staticmethod
-    def densenet_denseblock(inputs, num_layers, growth_rate, drop_rate, training=None, **kwargs):
-        features_list = []
-        features_list.append(inputs)
-        x = inputs
-        for _ in range(num_layers):
-            y = Densenet_squeeze.densenet_bottleneck(x, growth_rate=growth_rate, drop_rate=drop_rate, training=training)
-            features_list.append(y)
-            x = tf.concat(features_list, axis=-1)
-        features_list.clear()
-        return x
-
-    @staticmethod
-    def densenet_transitionlayer(inputs, out_channels, training=None, **kwargs):
-        # x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        x = FRN()(inputs)
-        # x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = DyReLU(out_channels)(x)
-        x = tf.keras.layers.Conv2D(filters=out_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = Densenet_squeeze.squeeze(x, out_channels)
-        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2),
-                                      strides=2,
-                                      padding="same")(x)
-        return x
-
-    @staticmethod
-    def Densenet(x, num_init_features, growth_rate, block_layers, compression_rate, drop_rate, training=None,
-                 mask=None):
-        x = tf.keras.layers.Conv2D(filters=num_init_features,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = FRN()(x)
-        x = DyReLU(num_init_features)(x)
-        # x = tf.keras.layers.Activation('Mish_Activation')(x)
-        # x = tf.nn.swish(x)
-        x = Densenet_squeeze.squeeze(x, num_init_features)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        num_channels = num_init_features
-        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[0], growth_rate=growth_rate,
-                                                 drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[0]
-
-        num_channels = compression_rate * num_channels
-        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[1], growth_rate=growth_rate,
-                                                 drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[1]
-        num_channels = compression_rate * num_channels
-        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[2], growth_rate=growth_rate,
-                                                 drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[2]
-        num_channels = compression_rate * num_channels
-        x = Densenet_squeeze.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Densenet_squeeze.densenet_denseblock(x, num_layers=block_layers[3], growth_rate=growth_rate,
-                                                 drop_rate=drop_rate)
-        return x
-
-
-class Lambda_Densenet(object):
-
-    @staticmethod
-    def densenet_bottleneck(inputs, growth_rate, drop_rate, training=None, **kwargs):
-        x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = LambdaLayer(dim_out=4 * growth_rate, r=23, dim_k=16, heads=4, dim_u=1)(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = LambdaLayer(dim_out=growth_rate, r=23, dim_k=16, heads=4, dim_u=1)(x)
-        # x = tf.keras.layers.Dropout(rate=drop_rate)(x)
-        # x = tf.keras.layers.GaussianDropout(rate=drop_rate)(x)
-        x = tf.keras.layers.GaussianNoise(stddev=drop_rate)(x)
-        # x = DropBlock(drop_rate=drop_rate)(x)
-        return x
-
-    @staticmethod
-    def densenet_denseblock(inputs, num_layers, growth_rate, drop_rate, training=None, **kwargs):
-        features_list = []
-        features_list.append(inputs)
-        x = inputs
-        for _ in range(num_layers):
-            y = Lambda_Densenet.densenet_bottleneck(x, growth_rate=growth_rate, drop_rate=drop_rate, training=training)
-            features_list.append(y)
-            x = tf.concat(features_list, axis=-1)
-        features_list.clear()
-        return x
-
-    @staticmethod
-    def densenet_transitionlayer(inputs, out_channels, training=None, **kwargs):
-        x = tf.keras.layers.BatchNormalization()(inputs, training=training)
-        x = tf.nn.swish(x)
-        x = LambdaLayer(dim_out=out_channels, r=23, dim_k=16, heads=4, dim_u=1)(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2),
-                                      strides=2,
-                                      padding="same")(x)
-        return x
-
-    @staticmethod
-    def Densenet(x, num_init_features, growth_rate, block_layers, compression_rate, drop_rate, training=None,
-                 mask=None):
-        x = tf.keras.layers.Conv2D(filters=num_init_features,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        # x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        num_channels = num_init_features
-        x = Lambda_Densenet.densenet_denseblock(x, num_layers=block_layers[0], growth_rate=growth_rate,
-                                                drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[0]
-
-        num_channels = compression_rate * num_channels
-        x = Lambda_Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Lambda_Densenet.densenet_denseblock(x, num_layers=block_layers[1], growth_rate=growth_rate,
-                                                drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[1]
-        num_channels = compression_rate * num_channels
-        x = Lambda_Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Lambda_Densenet.densenet_denseblock(x, num_layers=block_layers[2], growth_rate=growth_rate,
-                                                drop_rate=drop_rate)
-        num_channels += growth_rate * block_layers[2]
-        num_channels = compression_rate * num_channels
-        x = Lambda_Densenet.densenet_transitionlayer(x, out_channels=int(num_channels))
-        x = Lambda_Densenet.densenet_denseblock(x, num_layers=block_layers[3], growth_rate=growth_rate,
-                                                drop_rate=drop_rate)
-        return x
-
-
-# efficientnet
-class Efficientnet(object):
-
-    @staticmethod
-    def round_filters(filters, multiplier):
-        depth_divisor = 8
-        min_depth = None
-        min_depth = min_depth or depth_divisor
-        filters = filters * multiplier
-        new_filters = max(min_depth, int(filters + depth_divisor / 2) // depth_divisor * depth_divisor)
-        if new_filters < 0.9 * filters:
-            new_filters += depth_divisor
-        return int(new_filters)
-
-    @staticmethod
-    def round_repeats(repeats, multiplier):
-        if not multiplier:
-            return repeats
-        return int(math.ceil(multiplier * repeats))
-
-    @staticmethod
-    def efficientnet_seblock(inputs, input_channels, ratio=0.25, **kwargs):
-        num_reduced_filters = max(1, int(input_channels * ratio))
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.expand_dims(input=x, axis=1)
-        x = tf.expand_dims(input=x, axis=1)
-        x = tf.keras.layers.Conv2D(filters=num_reduced_filters, kernel_size=(1, 1), strides=1, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=input_channels, kernel_size=(1, 1), strides=1, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.nn.sigmoid(x)
-        x = inputs * x
-        return x
-
-    @staticmethod
-    def efficientnet_mbconv(inputs, in_channels, out_channels, expansion_factor, stride, k, drop_connect_rate, lite,
-                            training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=stride,
-                                            padding="same",
-                                            use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Efficientnet.efficientnet_seblock(x, input_channels=in_channels * expansion_factor)
-        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        if stride == 1 and in_channels == out_channels:
-            if drop_connect_rate:
-                x = tf.keras.layers.Dropout(rate=drop_connect_rate)(x)
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def efficientnet_build_mbconv_block(x, in_channels, out_channels, layers, stride, expansion_factor, k,
-                                        drop_connect_rate, lite):
-        for i in range(layers):
-            if i == 0:
-                x = Efficientnet.efficientnet_mbconv(x, in_channels=in_channels,
-                                                     out_channels=out_channels,
-                                                     expansion_factor=expansion_factor,
-                                                     stride=stride,
-                                                     k=k,
-                                                     drop_connect_rate=drop_connect_rate, lite=lite)
-            else:
-                x = Efficientnet.efficientnet_mbconv(x, in_channels=out_channels,
-                                                     out_channels=out_channels,
-                                                     expansion_factor=expansion_factor,
-                                                     stride=1,
-                                                     k=k,
-                                                     drop_connect_rate=drop_connect_rate, lite=lite)
-        return x
-
-    @staticmethod
-    def Efficientnet(x, width_coefficient, depth_coefficient, dropout_rate, drop_connect_rate=0.2, training=None,
-                     mask=None, lite=False):
-        x = tf.keras.layers.Conv2D(filters=Efficientnet.round_filters(32, width_coefficient),
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same",
-                                   use_bias=False)(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(32, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(16, width_coefficient),
-                                                         layers=Efficientnet.round_repeats(1, depth_coefficient),
-                                                         stride=1,
-                                                         expansion_factor=1, k=3, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(16, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(24, width_coefficient),
-                                                         layers=Efficientnet.round_repeats(2, depth_coefficient),
-                                                         stride=2,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(24, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(40, width_coefficient),
-                                                         layers=Efficientnet.round_repeats(2, depth_coefficient),
-                                                         stride=2,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(40, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(80, width_coefficient),
-                                                         layers=Efficientnet.round_repeats(3, depth_coefficient),
-                                                         stride=2,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(80, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(112,
-                                                                                                 width_coefficient),
-                                                         layers=Efficientnet.round_repeats(3, depth_coefficient),
-                                                         stride=1,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(112, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(192,
-                                                                                                 width_coefficient),
-                                                         layers=Efficientnet.round_repeats(4, depth_coefficient),
-                                                         stride=2,
-                                                         expansion_factor=6, k=5, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-        x = Efficientnet.efficientnet_build_mbconv_block(x,
-                                                         in_channels=Efficientnet.round_filters(192, width_coefficient),
-                                                         out_channels=Efficientnet.round_filters(320,
-                                                                                                 width_coefficient),
-                                                         layers=Efficientnet.round_repeats(1, depth_coefficient),
-                                                         stride=1,
-                                                         expansion_factor=6, k=3, drop_connect_rate=drop_connect_rate,
-                                                         lite=lite)
-
-        x = tf.keras.layers.Conv2D(filters=1280 if lite else Efficientnet.round_filters(1280, width_coefficient),
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x) if lite else tf.nn.swish(x)
-        return x
-
-
-class Efficientnet_Fpn(object):
-
-    @staticmethod
-    def round_filters(filters, multiplier):
-        depth_divisor = 8
-        min_depth = None
-        min_depth = min_depth or depth_divisor
-        filters = filters * multiplier
-        new_filters = max(min_depth, int(filters + depth_divisor / 2) // depth_divisor * depth_divisor)
-        if new_filters < 0.9 * filters:
-            new_filters += depth_divisor
-        return int(new_filters)
-
-    @staticmethod
-    def round_repeats(repeats, multiplier):
-        if not multiplier:
-            return repeats
-        return int(math.ceil(multiplier * repeats))
-
-    @staticmethod
-    def efficientnet_seblock(inputs, input_channels, ratio=0.25, **kwargs):
-        num_reduced_filters = max(1, int(input_channels * ratio))
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.expand_dims(input=x, axis=1)
-        x = tf.expand_dims(input=x, axis=1)
-        x = tf.keras.layers.Conv2D(filters=num_reduced_filters, kernel_size=(1, 1), strides=1, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.nn.swish(x)
-        # x = DyReLU(num_reduced_filters)(x)
-        x = tf.nn.relu(x)
-        x = tf.keras.layers.Conv2D(filters=input_channels, kernel_size=(1, 1), strides=1, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.nn.sigmoid(x)
-        x = inputs * x
-        return x
-
-    @staticmethod
-    def efficientnet_mbconv(inputs, in_channels, out_channels, expansion_factor, stride, k, drop_connect_rate,
-                            training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = tf.nn.swish(x)
-        x = FRN()(x)
-        x = DyReLU(in_channels * expansion_factor)(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=stride,
-                                            padding="same",
-                                            use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = Efficientnet.efficientnet_seblock(x, input_channels=in_channels * expansion_factor)
-        x = tf.keras.layers.Conv2D(filters=in_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        if stride == 1 and in_channels == out_channels:
-            if drop_connect_rate:
-                x = tf.keras.layers.Dropout(rate=drop_connect_rate)(x)
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def efficientnet_build_mbconv_block(x, in_channels, out_channels, layers, stride, expansion_factor, k,
-                                        drop_connect_rate):
-        for i in range(layers):
-            if i == 0:
-                x = Efficientnet_Fpn.efficientnet_mbconv(x, in_channels=in_channels,
-                                                         out_channels=out_channels,
-                                                         expansion_factor=expansion_factor,
-                                                         stride=stride,
-                                                         k=k,
-                                                         drop_connect_rate=drop_connect_rate)
-            else:
-                x = Efficientnet_Fpn.efficientnet_mbconv(x, in_channels=out_channels,
-                                                         out_channels=out_channels,
-                                                         expansion_factor=expansion_factor,
-                                                         stride=1,
-                                                         k=k,
-                                                         drop_connect_rate=drop_connect_rate)
-        return x
-
-    @staticmethod
-    def Efficientnet(x, width_coefficient, depth_coefficient, dropout_rate, drop_connect_rate=0.2, training=None,
-                     mask=None):
-        x = tf.keras.layers.Conv2D(filters=Efficientnet_Fpn.round_filters(32, width_coefficient),
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same",
-                                   use_bias=False)(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = tf.nn.swish(x)
-        x = FRN()(x)
-        x = DyReLU(Efficientnet_Fpn.round_filters(32, width_coefficient))(x)
-
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(32,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(16,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(1,
-                                                                                                   depth_coefficient),
-                                                             stride=1,
-                                                             expansion_factor=1, k=3,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(16,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(24,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(2,
-                                                                                                   depth_coefficient),
-                                                             stride=2,
-                                                             expansion_factor=6, k=3,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(24,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(40,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(2,
-                                                                                                   depth_coefficient),
-                                                             stride=2,
-                                                             expansion_factor=6, k=5,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(40,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(80,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(3,
-                                                                                                   depth_coefficient),
-                                                             stride=2,
-                                                             expansion_factor=6, k=3,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(80,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(112,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(3,
-                                                                                                   depth_coefficient),
-                                                             stride=1,
-                                                             expansion_factor=6, k=5,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(112,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(192,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(4,
-                                                                                                   depth_coefficient),
-                                                             stride=2,
-                                                             expansion_factor=6, k=5,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = Efficientnet_Fpn.efficientnet_build_mbconv_block(x,
-                                                             in_channels=Efficientnet_Fpn.round_filters(192,
-                                                                                                        width_coefficient),
-                                                             out_channels=Efficientnet_Fpn.round_filters(320,
-                                                                                                         width_coefficient),
-                                                             layers=Efficientnet_Fpn.round_repeats(1,
-                                                                                                   depth_coefficient),
-                                                             stride=1,
-                                                             expansion_factor=6, k=3,
-                                                             drop_connect_rate=drop_connect_rate)
-        x = tf.keras.layers.Conv2D(filters=Efficientnet_Fpn.round_filters(1280, width_coefficient),
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same",
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = tf.nn.swish(x)
-        x = FRN()(x)
-        x = DyReLU(Efficientnet_Fpn.round_filters(1280, width_coefficient))(x)
-        return x
-
-
-# mobilenet
-class Mobilenet(object):
-    @staticmethod
-    def bottleneck(inputs, input_channels, output_channels, expansion_factor, stride, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=input_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
-                                            strides=stride,
-                                            padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.Conv2D(filters=output_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if stride == 1 and input_channels == output_channels:
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def build_bottleneck(inputs, t, in_channel_num, out_channel_num, n, s):
-        bottleneck = inputs
-        for i in range(n):
-            if i == 0:
-                bottleneck = Mobilenet.bottleneck(inputs, input_channels=in_channel_num,
-                                                  output_channels=out_channel_num,
-                                                  expansion_factor=t,
-                                                  stride=s)
-            else:
-                bottleneck = Mobilenet.bottleneck(inputs, input_channels=out_channel_num,
-                                                  output_channels=out_channel_num,
-                                                  expansion_factor=t,
-                                                  stride=1)
-        return bottleneck
-
-    @staticmethod
-    def h_sigmoid(x):
-        return tf.nn.relu6(x + 3) / 6
-
-    @staticmethod
-    def seblock(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = Mobilenet.h_sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = inputs * x
-        return output
-
-    @staticmethod
-    def BottleNeck(inputs, in_size, exp_size, out_size, s, is_se_existing, NL, k, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=exp_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=s,
-                                            padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        if is_se_existing:
-            x = Mobilenet.seblock(x, input_channels=exp_size)
-        x = tf.keras.layers.Conv2D(filters=out_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if s == 1 and in_size == out_size:
-            x = tf.keras.layers.add([x, inputs])
-        return x
-
-    @staticmethod
-    def h_swish(x):
-        return x * Mobilenet.h_sigmoid(x)
-
-    @staticmethod
-    def MobileNetV1(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=64,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        return x
-
-    @staticmethod
-    def MobileNetV2(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = Mobilenet.build_bottleneck(x, t=1,
-                                       in_channel_num=32,
-                                       out_channel_num=16,
-                                       n=1,
-                                       s=1)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=16,
-                                       out_channel_num=24,
-                                       n=2,
-                                       s=2)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=24,
-                                       out_channel_num=32,
-                                       n=3,
-                                       s=2)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=32,
-                                       out_channel_num=64,
-                                       n=4,
-                                       s=2)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=64,
-                                       out_channel_num=96,
-                                       n=3,
-                                       s=1)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=96,
-                                       out_channel_num=160,
-                                       n=3,
-                                       s=2)
-        x = Mobilenet.build_bottleneck(x, t=6,
-                                       in_channel_num=160,
-                                       out_channel_num=320,
-                                       n=1,
-                                       s=1)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        return x
-
-    @staticmethod
-    def MobileNetV3Large(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        x = Mobilenet.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=1, is_se_existing=False, NL="RE", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=16, exp_size=64, out_size=24, s=2, is_se_existing=False, NL="RE", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=24, exp_size=72, out_size=24, s=1, is_se_existing=False, NL="RE", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=24, exp_size=72, out_size=40, s=2, is_se_existing=True, NL="RE", k=5,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=240, out_size=80, s=2, is_se_existing=False, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=80, exp_size=200, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=80, exp_size=480, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=112, exp_size=672, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=112, exp_size=672, out_size=160, s=2, is_se_existing=True, NL="HS", k=5,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                 training=training)
-        x = Mobilenet.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                 training=training)
-        x = tf.keras.layers.Conv2D(filters=960,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = Mobilenet.h_swish(x)
-        # outputs = tf.keras.layers.Conv2D(filters=Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-    @staticmethod
-    def MobileNetV3Small(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        x = Mobilenet.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
-        x = Mobilenet.BottleNeck(x, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet.BottleNeck(x, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet.BottleNeck(x, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = tf.keras.layers.Conv2D(filters=576,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        # x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-        #                                      strides=1)(x)
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(x)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(x)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(x)
-        x = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, x])
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=1280)
-        # outputs = tf.keras.layers.Conv2D(filters=CAPTCHA_LENGTH * Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-
-class MobileNetv3_small_squeeze(object):
-    @staticmethod
-    def relu6(x):
-        # relu函数
-        return K.relu(x, max_value=6.0)
-
-    @staticmethod
-    def hard_swish(x):
-        # 利用relu函数乘上x模拟sigmoid
-        return x * K.relu(x + 3.0, max_value=6.0) / 6.0
-
-    @staticmethod
-    def return_activation(x, nl):
-        # 用于判断使用哪个激活函数
-        if nl == 'HS':
-            x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
-        if nl == 'RE':
-            x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
-
-        return x
-
-    @staticmethod
-    def conv_block(inputs, filters, kernel, strides, nl):
-        # 一个卷积单元，也就是conv2d + batchnormalization + activation
-        channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
-
-        x = tf.keras.layers.Conv2D(filters, kernel, padding='same', strides=strides)(inputs)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-
-        return MobileNetv3_small_squeeze.return_activation(x, nl)
-
-    @staticmethod
-    def squeeze(inputs):
-        # 注意力机制单元
-        input_channels = int(inputs.shape[-1])
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
-        x = tf.keras.layers.Dense(input_channels)(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
-        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
-        x = tf.keras.layers.Multiply()([inputs, x])
-
-        return x
-
-    @staticmethod
-    def bottleneck(inputs, filters, kernel, up_dim, stride, sq, nl):
-        channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
-
-        input_shape = K.int_shape(inputs)
-
-        tchannel = int(up_dim)
-        cchannel = int(1 * filters)
-
-        r = stride == 1 and input_shape[3] == filters
-        # 1x1卷积调整通道数，通道数上升
-        x = MobileNetv3_small_squeeze.conv_block(inputs, tchannel, (1, 1), (1, 1), nl)
-        # 进行3x3深度可分离卷积
-        x = tf.keras.layers.DepthwiseConv2D(kernel, strides=(stride, stride), depth_multiplier=1, padding='same')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-        x = MobileNetv3_small_squeeze.return_activation(x, nl)
-        # 引入注意力机制
-        if sq:
-            x = MobileNetv3_small_squeeze.squeeze(x)
-        # 下降通道数
-        x = tf.keras.layers.Conv2D(cchannel, (1, 1), strides=(1, 1), padding='same')(x)
-        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
-
-        if r:
-            x = tf.keras.layers.Add()([x, inputs])
-
-        return x
-
-    @staticmethod
-    def MobileNetv3_small(inputs, train=False):
-        # 224,224,3 -> 112,112,16
-        x = MobileNetv3_small_squeeze.conv_block(inputs, 16, (3, 3), strides=(2, 2), nl='HS')
-
-        # 112,112,16 -> 56,56,16
-        x = MobileNetv3_small_squeeze.bottleneck(x, 16, (3, 3), up_dim=16, stride=2, sq=True, nl='RE')
-
-        # 56,56,16 -> 28,28,24
-        x = MobileNetv3_small_squeeze.bottleneck(x, 24, (3, 3), up_dim=72, stride=2, sq=False, nl='RE')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 24, (3, 3), up_dim=88, stride=1, sq=False, nl='RE')
-
-        # 28,28,24 -> 14,14,40
-        x = MobileNetv3_small_squeeze.bottleneck(x, 40, (5, 5), up_dim=96, stride=2, sq=True, nl='HS')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 40, (5, 5), up_dim=240, stride=1, sq=True, nl='HS')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 40, (5, 5), up_dim=240, stride=1, sq=True, nl='HS')
-        # 14,14,40 -> 14,14,48
-        x = MobileNetv3_small_squeeze.bottleneck(x, 48, (5, 5), up_dim=120, stride=1, sq=True, nl='HS')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 48, (5, 5), up_dim=144, stride=1, sq=True, nl='HS')
-
-        # 14,14,48 -> 7,7,96
-        x = MobileNetv3_small_squeeze.bottleneck(x, 96, (5, 5), up_dim=288, stride=2, sq=True, nl='HS')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 96, (5, 5), up_dim=576, stride=1, sq=True, nl='HS')
-        x = MobileNetv3_small_squeeze.bottleneck(x, 96, (5, 5), up_dim=576, stride=1, sq=True, nl='HS')
-
-        x = MobileNetv3_small_squeeze.conv_block(x, 576, (1, 1), strides=(1, 1), nl='HS')
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(x)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(x)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(x)
-        x = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, x])
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        return x
-        # x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        # x = tf.keras.layers.Reshape((1, 1, 576))(x)
-        #
-        # x = tf.keras.layers.Conv2D(1024, (1, 1), padding='same')(x)
-        # x = MobileNetv3_small_squeeze.return_activation(x, 'HS')
-        #
-        # x = tf.keras.layers.Conv2D(n_class, (1, 1), padding='same', activation='softmax')(x)
-        # x = tf.keras.layers.Reshape((n_class,))(x)
-        #
-        # model = tf.keras.Model(inputs, x)
-        #
-        # return model
-
-
-class Mobilenet_se(object):
-    @staticmethod
-    def bottleneck(inputs, input_channels, output_channels, expansion_factor, stride, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=input_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=input_channels * expansion_factor)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
-                                            strides=stride,
-                                            padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.Conv2D(filters=output_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=output_channels)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if stride == 1 and input_channels == output_channels:
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def build_bottleneck(inputs, t, in_channel_num, out_channel_num, n, s):
-        bottleneck = inputs
-        for i in range(n):
-            if i == 0:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=in_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=s)
-            else:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=out_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=1)
-        return bottleneck
-
-    @staticmethod
-    def h_sigmoid(x):
-        return tf.nn.relu6(x + 3) / 6
-
-    @staticmethod
-    def seblock(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = Mobilenet.h_sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = inputs * x
-        return output
-
-    @staticmethod
-    def BottleNeck(inputs, in_size, exp_size, out_size, s, is_se_existing, NL, k, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=exp_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=exp_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=s,
-                                            padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        if is_se_existing:
-            x = Mobilenet_se.seblock(x, input_channels=exp_size)
-        x = tf.keras.layers.Conv2D(filters=out_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = SEResNet.seblock(inputs=x, input_channels=out_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if s == 1 and in_size == out_size:
-            x = tf.keras.layers.add([x, inputs])
-        return x
-
-    @staticmethod
-    def h_swish(x):
-        return x * Mobilenet_se.h_sigmoid(x)
-
-    @staticmethod
-    def MobileNetV1(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=64,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        return x
-
-    @staticmethod
-    def MobileNetV2(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=32)
-        x = Mobilenet_se.build_bottleneck(x, t=1,
-                                          in_channel_num=32,
-                                          out_channel_num=16,
-                                          n=1,
-                                          s=1)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=16,
-                                          out_channel_num=24,
-                                          n=2,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=24,
-                                          out_channel_num=32,
-                                          n=3,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=32,
-                                          out_channel_num=64,
-                                          n=4,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=64,
-                                          out_channel_num=96,
-                                          n=3,
-                                          s=1)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=96,
-                                          out_channel_num=160,
-                                          n=3,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=160,
-                                          out_channel_num=320,
-                                          n=1,
-                                          s=1)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=1280)
-        return x
-
-    @staticmethod
-    def MobileNetV3Large(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_se.h_swish(x)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=1, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=64, out_size=24, s=2, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=72, out_size=24, s=1, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=72, out_size=40, s=2, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=80, s=2, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=200, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=480, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=112, exp_size=672, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=112, exp_size=672, out_size=160, s=2, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = tf.keras.layers.Conv2D(filters=960,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_se.h_swish(x)
-        x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-                                             strides=1)(x)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = Mobilenet_se.h_swish(x)
-        # outputs = tf.keras.layers.Conv2D(filters=Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-    @staticmethod
-    def MobileNetV3Small(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=16)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_se.h_swish(x)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_se.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = tf.keras.layers.Conv2D(filters=576,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=576)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        # x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-        #                                      strides=1)(x)
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(x)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(x)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(x)
-        x = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, x])
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=1280)
-        # outputs = tf.keras.layers.Conv2D(filters=CAPTCHA_LENGTH * Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-
-class Mobilenet_tpu(object):
-    @staticmethod
-    def bottleneck(inputs, input_channels, output_channels, expansion_factor, stride, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=input_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=input_channels * expansion_factor)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
-                                            strides=stride,
-                                            padding="same")(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.Conv2D(filters=output_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=output_channels)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if stride == 1 and input_channels == output_channels:
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def build_bottleneck(inputs, t, in_channel_num, out_channel_num, n, s):
-        bottleneck = inputs
-        for i in range(n):
-            if i == 0:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=in_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=s)
-            else:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=out_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=1)
-        return bottleneck
-
-    @staticmethod
-    def h_sigmoid(x):
-        return tf.nn.relu6(x + 3) / 6
-
-    @staticmethod
-    def seblock(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = Mobilenet.h_sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = inputs * x
-        return output
-
-    @staticmethod
-    def BottleNeck(inputs, in_size, exp_size, out_size, s, is_se_existing, NL, k, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=exp_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=exp_size)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=s,
-                                            padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        if is_se_existing:
-            x = Mobilenet_se.seblock(x, input_channels=exp_size)
-        x = tf.keras.layers.Conv2D(filters=out_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = SEResNet.seblock(inputs=x, input_channels=out_size)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if s == 1 and in_size == out_size:
-            x = tf.keras.layers.add([x, inputs])
-        return x
-
-    @staticmethod
-    def h_swish(x):
-        return x * Mobilenet_se.h_sigmoid(x)
-
-    @staticmethod
-    def MobileNetV1(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=64,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=128,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=256,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=512,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=2,
-                                            padding="same")(x)
-        x = tf.keras.layers.SeparableConv2D(filters=1024,
-                                            kernel_size=(3, 3),
-                                            strides=1,
-                                            padding="same")(x)
-        return x
-
-    @staticmethod
-    def MobileNetV2(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=32,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=32)
-        x = Mobilenet_se.build_bottleneck(x, t=1,
-                                          in_channel_num=32,
-                                          out_channel_num=16,
-                                          n=1,
-                                          s=1)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=16,
-                                          out_channel_num=24,
-                                          n=2,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=24,
-                                          out_channel_num=32,
-                                          n=3,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=32,
-                                          out_channel_num=64,
-                                          n=4,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=64,
-                                          out_channel_num=96,
-                                          n=3,
-                                          s=1)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=96,
-                                          out_channel_num=160,
-                                          n=3,
-                                          s=2)
-        x = Mobilenet_se.build_bottleneck(x, t=6,
-                                          in_channel_num=160,
-                                          out_channel_num=320,
-                                          n=1,
-                                          s=1)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=1280)
-        return x
-
-    @staticmethod
-    def MobileNetV3Large(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_se.h_swish(x)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=1, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=16, exp_size=64, out_size=24, s=2, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=72, out_size=24, s=1, is_se_existing=False, NL="RE", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=24, exp_size=72, out_size=40, s=2, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=120, out_size=40, s=1, is_se_existing=True, NL="RE", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=40, exp_size=240, out_size=80, s=2, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=200, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=184, out_size=80, s=1, is_se_existing=False, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=80, exp_size=480, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=112, exp_size=672, out_size=112, s=1, is_se_existing=True, NL="HS", k=3,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=112, exp_size=672, out_size=160, s=2, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = Mobilenet_se.BottleNeck(x, in_size=160, exp_size=960, out_size=160, s=1, is_se_existing=True, NL="HS", k=5,
-                                    training=training)
-        x = tf.keras.layers.Conv2D(filters=960,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_se.h_swish(x)
-        x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-                                             strides=1)(x)
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = Mobilenet_se.h_swish(x)
-        # outputs = tf.keras.layers.Conv2D(filters=Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-    @staticmethod
-    def MobileNetV3Small(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=16)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = Mobilenet_tpu.h_swish(x)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = Mobilenet_tpu.BottleNeck(x, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = tf.keras.layers.Conv2D(filters=576,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=576)
-        # x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = FRN()(x)
-        x = Mobilenet.h_swish(x)
-        # x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-        #                                      strides=1)(x)
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(13, 13), strides=(1, 1), padding='same')(x)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(9, 9), strides=(1, 1), padding='same')(x)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(5, 5), strides=(1, 1), padding='same')(x)
-        x = tf.keras.layers.Concatenate()([maxpool1, maxpool2, maxpool3, x])
-        x = tf.keras.layers.Conv2D(filters=1280,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=1280)
-        # outputs = tf.keras.layers.Conv2D(filters=CAPTCHA_LENGTH * Settings.settings(),
-        #                                  kernel_size=(1, 1),
-        #                                  strides=1,
-        #                                  padding="same",
-        #                                  activation=tf.keras.activations.softmax)(x)
-        # outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
-        # model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # return model
-        return x
-
-
 # object_detection
 class GhostNet_det(object):
 
@@ -8181,913 +5378,6 @@ class GhostNet_det(object):
         return x1, x2, x3, x4, x5
 
 
-class Mobilenet_det(object):
-    @staticmethod
-    def bottleneck(inputs, input_channels, output_channels, expansion_factor, stride, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=input_channels * expansion_factor,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=input_channels * expansion_factor)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3),
-                                            strides=stride,
-                                            padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu6(x)
-        x = tf.keras.layers.Conv2D(filters=output_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=output_channels)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if stride == 1 and input_channels == output_channels:
-            x = tf.keras.layers.concatenate([x, inputs])
-        return x
-
-    @staticmethod
-    def build_bottleneck(inputs, t, in_channel_num, out_channel_num, n, s):
-        bottleneck = inputs
-        for i in range(n):
-            if i == 0:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=in_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=s)
-            else:
-                bottleneck = Mobilenet_se.bottleneck(inputs, input_channels=out_channel_num,
-                                                     output_channels=out_channel_num,
-                                                     expansion_factor=t,
-                                                     stride=1)
-        return bottleneck
-
-    @staticmethod
-    def h_sigmoid(x):
-        return tf.nn.relu6(x + 3) / 6
-
-    @staticmethod
-    def seblock(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = Mobilenet.h_sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = inputs * x
-        return output
-
-    @staticmethod
-    def BottleNeck(inputs, in_size, exp_size, out_size, s, is_se_existing, NL, k, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=exp_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = SEResNet.seblock(inputs=x, input_channels=exp_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(k, k),
-                                            strides=s,
-                                            padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        if NL == 'HS':
-            x = Mobilenet.h_swish(x)
-        elif NL == 'RE':
-            x = tf.nn.relu6(x)
-        if is_se_existing:
-            x = Mobilenet_se.seblock(x, input_channels=exp_size)
-        x = tf.keras.layers.Conv2D(filters=out_size,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = SEResNet.seblock(inputs=x, input_channels=out_size)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        # x = FRN()(x)
-        x = tf.keras.layers.Activation(tf.keras.activations.linear)(x)
-        if s == 1 and in_size == out_size:
-            x = tf.keras.layers.add([x, inputs])
-        return x
-
-    @staticmethod
-    def h_swish(x):
-        return x * Mobilenet_se.h_sigmoid(x)
-
-    @staticmethod
-    def MobileNetV3Small(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(3, 3),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SEResNet.seblock(inputs=x, input_channels=16)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet_det.h_swish(x)
-        x1 = Mobilenet_det.BottleNeck(x, in_size=16, exp_size=16, out_size=16, s=2, is_se_existing=True, NL="RE", k=3)
-        x2 = Mobilenet_det.BottleNeck(x1, in_size=16, exp_size=72, out_size=24, s=2, is_se_existing=False, NL="RE", k=3)
-        x2 = Mobilenet_det.BottleNeck(x2, in_size=24, exp_size=88, out_size=24, s=1, is_se_existing=False, NL="RE", k=3)
-        x3 = Mobilenet_det.BottleNeck(x2, in_size=24, exp_size=96, out_size=40, s=2, is_se_existing=True, NL="HS", k=5)
-        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=240, out_size=40, s=1, is_se_existing=True, NL="HS", k=5)
-        x3 = Mobilenet_det.BottleNeck(x3, in_size=40, exp_size=120, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x3 = Mobilenet_det.BottleNeck(x3, in_size=48, exp_size=144, out_size=48, s=1, is_se_existing=True, NL="HS", k=5)
-        x4 = Mobilenet_det.BottleNeck(x3, in_size=48, exp_size=288, out_size=96, s=2, is_se_existing=True, NL="HS", k=5)
-        x4 = Mobilenet_det.BottleNeck(x4, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x4 = Mobilenet_det.BottleNeck(x4, in_size=96, exp_size=576, out_size=96, s=1, is_se_existing=True, NL="HS", k=5)
-        x = tf.keras.layers.Conv2D(filters=16,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        # x = SEResNet.seblock(inputs=x, input_channels=576)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = Mobilenet.h_swish(x)
-        x1 = tf.keras.layers.Conv2D(filters=24,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x1)
-        x1 = tf.keras.layers.BatchNormalization()(x1, training=training)
-        x1 = Mobilenet.h_swish(x1)
-
-        x2 = tf.keras.layers.Conv2D(filters=40,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x2)
-        x2 = tf.keras.layers.BatchNormalization()(x2, training=training)
-        x2 = Mobilenet.h_swish(x2)
-
-        x3 = tf.keras.layers.Conv2D(filters=112,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x3)
-        x3 = tf.keras.layers.BatchNormalization()(x3, training=training)
-        x3 = Mobilenet.h_swish(x3)
-
-        x4 = tf.keras.layers.Conv2D(filters=320,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x4)
-        x4 = tf.keras.layers.BatchNormalization()(x4, training=training)
-        x4 = Mobilenet.h_swish(x4)
-
-        # x = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-        #                                      strides=1)(x)
-        maxpool1 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x)
-        maxpool2 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x1)
-        maxpool3 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x2)
-        maxpool4 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x3)
-        maxpool5 = tf.keras.layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), padding='same')(x4)
-        return maxpool1, maxpool2, maxpool3, maxpool4, maxpool5
-
-
-# resnext
-class ResNeXt(object):
-    @staticmethod
-    def BasicBlock(inputs, filter_num, stride=1, training=None, **kwargs):
-        if stride != 1:
-            residual = tf.keras.layers.Conv2D(filters=filter_num,
-                                              kernel_size=(1, 1),
-                                              strides=stride)(inputs)
-            residual = tf.keras.layers.BatchNormalization()(residual, training=training)
-        else:
-            residual = inputs
-
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(3, 3),
-                                   strides=stride,
-                                   padding="same")(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(3, 3),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        output = tf.keras.layers.concatenate([residual, x])
-        return output
-
-    @staticmethod
-    def BottleNeck(inputs, filter_num, stride=1, training=None, **kwargs):
-        residual = tf.keras.layers.Conv2D(filters=filter_num * 4,
-                                          kernel_size=(1, 1),
-                                          strides=stride, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        residual = tf.keras.layers.BatchNormalization()(residual, training=training)
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(3, 3),
-                                   strides=stride,
-                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=filter_num * 4,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        return tf.nn.relu(tf.keras.layers.add([residual, x]))
-
-    @staticmethod
-    def make_basic_block_layer(inputs, filter_num, blocks, stride=1, training=None, mask=None):
-        res_block = ResNeXt.BasicBlock(inputs, filter_num, stride=stride)
-        for _ in range(1, blocks):
-            res_block = ResNeXt.BasicBlock(inputs, filter_num, stride=1)
-        return res_block
-
-    @staticmethod
-    def make_bottleneck_layer(inputs, filter_num, blocks, stride=1, training=None, mask=None):
-        res_block = ResNeXt.BottleNeck(inputs, filter_num, stride=stride)
-        for _ in range(1, blocks):
-            res_block = ResNeXt.BottleNeck(inputs, filter_num, stride=1)
-        return res_block
-
-    @staticmethod
-    def ResNeXt_BottleNeck(inputs, filters, strides, groups, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=(3, 3),
-                                   strides=strides,
-                                   padding="same", )(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu(x)
-        x = tf.keras.layers.Conv2D(filters=2 * filters,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        shortcut = tf.keras.layers.Conv2D(filters=2 * filters,
-                                          kernel_size=(1, 1),
-                                          strides=strides,
-                                          padding="same")(inputs)
-        shortcut = tf.keras.layers.BatchNormalization()(shortcut, training=training)
-        output = tf.nn.relu(tf.keras.layers.add([x, shortcut]))
-        return output
-
-    @staticmethod
-    def build_ResNeXt_block(inputs, filters, strides, groups, repeat_num):
-        block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                           strides=strides,
-                                           groups=groups)
-        for _ in range(1, repeat_num):
-            block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                               strides=1,
-                                               groups=groups)
-        return block
-
-    @staticmethod
-    def ResNetTypeI(x, layer_params, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = ResNeXt.make_basic_block_layer(x, filter_num=64,
-                                           blocks=layer_params[0])
-        x = ResNeXt.make_basic_block_layer(x, filter_num=128,
-                                           blocks=layer_params[1],
-                                           stride=2)
-        x = ResNeXt.make_basic_block_layer(x, filter_num=256,
-                                           blocks=layer_params[2],
-                                           stride=2)
-        x = ResNeXt.make_basic_block_layer(x, filter_num=512,
-                                           blocks=layer_params[3],
-                                           stride=2)
-        return x
-
-    @staticmethod
-    def ResNetTypeII(x, layer_params, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same", kernel_initializer=tf.keras.initializers.he_normal())(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = ResNeXt.make_bottleneck_layer(x, filter_num=64,
-                                          blocks=layer_params[0], training=training)
-        x = ResNeXt.make_bottleneck_layer(x, filter_num=128,
-                                          blocks=layer_params[1],
-                                          stride=2, training=training)
-        x = ResNeXt.make_bottleneck_layer(x, filter_num=256,
-                                          blocks=layer_params[2],
-                                          stride=2, training=training)
-        x = ResNeXt.make_bottleneck_layer(x, filter_num=512,
-                                          blocks=layer_params[3],
-                                          stride=2, training=training)
-        return x
-
-    @staticmethod
-    def Resnext(x, repeat_num_list, cardinality, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = ResNeXt.build_ResNeXt_block(x, filters=128,
-                                        strides=1,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[0])
-        x = ResNeXt.build_ResNeXt_block(x, filters=256,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[1])
-        x = ResNeXt.build_ResNeXt_block(x, filters=512,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[2])
-        x = ResNeXt.build_ResNeXt_block(x, filters=1024,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[3])
-        return x
-
-
-class ResNext_squeeze(object):
-    @staticmethod
-    def squeeze(inputs):
-        # 注意力机制单元
-        input_channels = int(inputs.shape[-1])
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
-        x = tf.keras.layers.Dense(input_channels)(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
-        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
-        x = tf.keras.layers.Multiply()([inputs, x])
-        return x
-
-    @staticmethod
-    def ResNeXt_BottleNeck(inputs, filters, strides, groups, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Conv2D(filters=filters,
-                                   kernel_size=(3, 3),
-                                   strides=strides,
-                                   padding="same", )(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = ResNext_squeeze.squeeze(x)
-        x = tf.keras.layers.Conv2D(filters=2 * filters,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        shortcut = tf.keras.layers.Conv2D(filters=2 * filters,
-                                          kernel_size=(1, 1),
-                                          strides=strides,
-                                          padding="same")(inputs)
-        shortcut = tf.keras.layers.BatchNormalization()(shortcut, training=training)
-        output = tf.nn.swish(tf.keras.layers.add([x, shortcut]))
-        return output
-
-    @staticmethod
-    def build_ResNeXt_block(inputs, filters, strides, groups, repeat_num):
-        block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                           strides=strides,
-                                           groups=groups)
-        for _ in range(1, repeat_num):
-            block = ResNeXt.ResNeXt_BottleNeck(inputs, filters=filters,
-                                               strides=1,
-                                               groups=groups)
-        return block
-
-    @staticmethod
-    def Resnext(x, repeat_num_list, cardinality, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Activation('Mish_Activation')(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = ResNeXt.build_ResNeXt_block(x, filters=128,
-                                        strides=1,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[0])
-        x = ResNeXt.build_ResNeXt_block(x, filters=256,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[1])
-        x = ResNeXt.build_ResNeXt_block(x, filters=512,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[2])
-        x = ResNeXt.build_ResNeXt_block(x, filters=1024,
-                                        strides=2,
-                                        groups=cardinality,
-                                        repeat_num=repeat_num_list[3])
-        return x
-
-
-class CBAM_ResNet(object):
-    @staticmethod
-    def channel_attention(inputs, in_planes, ratio=16):
-        avg = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        max = tf.keras.layers.GlobalMaxPooling2D()(inputs)
-        avg = tf.keras.layers.Reshape((1, 1, avg.shape[1]))(avg)
-        max = tf.keras.layers.Reshape((1, 1, max.shape[1]))(max)
-        avg_out = tf.keras.layers.Conv2D(in_planes // ratio, kernel_size=1, strides=1, padding='same',
-                                         kernel_regularizer=tf.keras.regularizers.l2(5e-4),
-                                         use_bias=True, activation=tf.nn.relu)(avg)
-        avg_out = tf.keras.layers.Conv2D(in_planes, kernel_size=1, strides=1, padding='same',
-                                         kernel_regularizer=tf.keras.regularizers.l2(5e-4),
-                                         use_bias=True)(avg_out)
-        max_out = tf.keras.layers.Conv2D(in_planes // ratio, kernel_size=1, strides=1, padding='same',
-                                         kernel_regularizer=tf.keras.regularizers.l2(5e-4),
-                                         use_bias=True, activation=tf.nn.relu)(max)
-        max_out = tf.keras.layers.Conv2D(in_planes, kernel_size=1, strides=1, padding='same',
-                                         kernel_regularizer=tf.keras.regularizers.l2(5e-4),
-                                         use_bias=True)(max_out)
-        out = avg_out + max_out
-        return tf.nn.sigmoid(out)
-
-    @staticmethod
-    def spatial_attention(inputs, kernel_size=7):
-        avg_out = tf.reduce_mean(inputs, axis=3)
-        max_out = tf.reduce_max(inputs, axis=3)
-        out = tf.stack([avg_out, max_out], axis=3)
-        return tf.keras.layers.Conv2D(1, kernel_size=kernel_size, strides=1, activation=tf.nn.sigmoid, padding='same',
-                                      use_bias=False, kernel_initializer=tf.keras.initializers.he_normal(),
-                                      kernel_regularizer=tf.keras.regularizers.l2(5e-4))(out)
-
-    @staticmethod
-    def bootleneck(x, out_channels, strides=1, training=False):
-        x = tf.keras.layers.Conv2D(out_channels, kernel_size=1, strides=1, activation=tf.nn.sigmoid, padding='same',
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = Mish()(x)
-        x = tf.keras.layers.Conv2D(out_channels, kernel_size=3, strides=strides, activation=tf.nn.sigmoid,
-                                   padding='same',
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = Mish()(x)
-        x = tf.keras.layers.Conv2D(out_channels * 4, kernel_size=1, strides=1, activation=tf.nn.sigmoid, padding='same',
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.keras.layers.Conv2D(out_channels * 4, kernel_size=1, strides=1, activation=tf.nn.sigmoid,
-                                   padding='same',
-                                   use_bias=False, kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        out = tf.keras.layers.BatchNormalization()(x, training)
-        x = out + x
-        return Mish()(x)
-
-    @staticmethod
-    def build_ResNet_block(inputs, filters, strides, repeat_num):
-        block = CBAM_ResNet.bootleneck(inputs, out_channels=filters, strides=strides)
-        for _ in range(1, repeat_num):
-            block = CBAM_ResNet.bootleneck(inputs, out_channels=filters, strides=strides)
-        return block
-
-    @staticmethod
-    def Resnext(x, repeat_num_list, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.relu(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2,
-                                      padding="same")(x)
-        x = CBAM_ResNet.build_ResNet_block(x, filters=128,
-                                           strides=1,
-                                           repeat_num=repeat_num_list[0])
-        x = CBAM_ResNet.build_ResNet_block(x, filters=256,
-                                           strides=2,
-                                           repeat_num=repeat_num_list[1])
-        x = CBAM_ResNet.build_ResNet_block(x, filters=512,
-                                           strides=2,
-                                           repeat_num=repeat_num_list[2])
-        x = CBAM_ResNet.build_ResNet_block(x, filters=1024,
-                                           strides=2,
-                                           repeat_num=repeat_num_list[3])
-        return x
-
-
-# SEResNet
-class SEResNet(object):
-    @staticmethod
-    def seblock(inputs, input_channels, r=16, **kwargs):
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(units=input_channels // r)(x)
-        x = tf.nn.relu(x)
-        x = tf.keras.layers.Dense(units=input_channels)(x)
-        x = tf.nn.sigmoid(x)
-        x = tf.expand_dims(x, axis=1)
-        x = tf.expand_dims(x, axis=1)
-        output = tf.keras.layers.multiply(inputs=[inputs, x])
-        return output
-
-    @staticmethod
-    def bottleneck(inputs, filter_num, stride=1, training=None):
-        identity = tf.keras.layers.Conv2D(filters=filter_num * 4,
-                                          kernel_size=(1, 1),
-                                          strides=stride)(inputs)
-        identity = tf.keras.layers.BatchNormalization()(identity)
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding='same')(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=filter_num,
-                                   kernel_size=(3, 3),
-                                   strides=stride,
-                                   padding='same')(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.Conv2D(filters=filter_num * 4,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding='same')(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = SEResNet.seblock(x, input_channels=filter_num * 4)
-        output = tf.nn.swish(tf.keras.layers.add([identity, x]))
-        return output
-
-    @staticmethod
-    def _make_res_block(inputs, filter_num, blocks, stride=1):
-        x = SEResNet.bottleneck(inputs, filter_num, stride=stride)
-        for _ in range(1, blocks):
-            x = SEResNet.bottleneck(x, filter_num, stride=1)
-        return x
-
-    @staticmethod
-    def SEResNet(x, block_num, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=64,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding='same')(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.keras.layers.Activation(tf.keras.activations.swish)(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SEResNet._make_res_block(x, filter_num=64,
-                                     blocks=block_num[0])
-        x = SEResNet._make_res_block(x, filter_num=128,
-                                     blocks=block_num[1],
-                                     stride=2)
-        x = SEResNet._make_res_block(x, filter_num=256,
-                                     blocks=block_num[2],
-                                     stride=2)
-        x = SEResNet._make_res_block(x, filter_num=512,
-                                     blocks=block_num[3],
-                                     stride=2)
-        return x
-
-
-# ShuffleNetV2
-class ShuffleNetV2(object):
-    @staticmethod
-    def channel_shuffle(feature, group):
-        channel_num = feature.shape[-1]
-        if channel_num % group != 0:
-            raise ValueError("The group must be divisible by the shape of the last dimension of the feature.")
-        x = tf.reshape(feature, shape=(-1, feature.shape[1], feature.shape[2], group, channel_num // group))
-        x = tf.transpose(x, perm=[0, 1, 2, 4, 3])
-        x = tf.reshape(x, shape=(-1, feature.shape[1], feature.shape[2], channel_num))
-        return x
-
-    @staticmethod
-    def ShuffleBlockS1(inputs, in_channels, out_channels, training=None, **kwargs):
-        branch, x = tf.split(inputs, num_or_size_splits=2, axis=-1)
-        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=1, padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        outputs = tf.concat(values=[branch, x], axis=-1)
-        outputs = ShuffleNetV2.channel_shuffle(feature=outputs, group=2)
-        return outputs
-
-    @staticmethod
-    def ShuffleBlockS2(inputs, in_channels, out_channels, training=None, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=2, padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.keras.layers.Conv2D(filters=out_channels - in_channels,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training=training)
-        x = tf.nn.swish(x)
-        branch = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=2, padding="same")(inputs)
-        branch = tf.keras.layers.BatchNormalization()(branch, training=training)
-        branch = tf.keras.layers.Conv2D(filters=in_channels,
-                                        kernel_size=(1, 1),
-                                        strides=1,
-                                        padding="same")(branch)
-        branch = tf.keras.layers.BatchNormalization()(branch, training=training)
-        branch = tf.nn.swish(branch)
-        outputs = tf.concat(values=[x, branch], axis=-1)
-        outputs = ShuffleNetV2.channel_shuffle(feature=outputs, group=2)
-        return outputs
-
-    @staticmethod
-    def _make_layer(inputs, repeat_num, in_channels, out_channels):
-        x = ShuffleNetV2.ShuffleBlockS2(inputs, in_channels=in_channels, out_channels=out_channels)
-        for _ in range(1, repeat_num):
-            x = ShuffleNetV2.ShuffleBlockS1(x, in_channels=out_channels, out_channels=out_channels)
-        return x
-
-    @staticmethod
-    def ShuffleNetV2(x, channel_scale, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=24, kernel_size=(3, 3), strides=2, padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=2, padding="same")(x)
-        x = ShuffleNetV2._make_layer(x, repeat_num=4, in_channels=24, out_channels=channel_scale[0])
-        x = ShuffleNetV2._make_layer(x, repeat_num=8, in_channels=channel_scale[0], out_channels=channel_scale[1])
-        x = ShuffleNetV2._make_layer(x, repeat_num=4, in_channels=channel_scale[1], out_channels=channel_scale[2])
-        x = tf.keras.layers.Conv2D(filters=channel_scale[3], kernel_size=(1, 1), strides=1, padding="same")(x)
-        x = tf.keras.layers.BatchNormalization()(x, training)
-        return x
-
-
-# SqueezeNet
-class SqueezeNet(object):
-    @staticmethod
-    def FireModule(inputs, s1, e1, e3, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=s1,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = tf.nn.relu(x)
-        y1 = tf.keras.layers.Conv2D(filters=e1,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x)
-        y1 = tf.nn.relu(y1)
-        y2 = tf.keras.layers.Conv2D(filters=e3,
-                                    kernel_size=(3, 3),
-                                    strides=1,
-                                    padding="same")(x)
-        y2 = tf.nn.relu(y2)
-        return tf.concat(values=[y1, y2], axis=-1)
-
-    @staticmethod
-    def SqueezeNet(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=96,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet.FireModule(x, s1=16, e1=64, e3=64)
-        x = SqueezeNet.FireModule(x, s1=16, e1=64, e3=64)
-        x = SqueezeNet.FireModule(x, s1=32, e1=128, e3=128)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet.FireModule(x, s1=32, e1=128, e3=128)
-        x = SqueezeNet.FireModule(x, s1=48, e1=192, e3=192)
-        x = SqueezeNet.FireModule(x, s1=48, e1=192, e3=192)
-        x = SqueezeNet.FireModule(x, s1=64, e1=256, e3=256)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet.FireModule(x, s1=64, e1=256, e3=256)
-        x = tf.keras.layers.Dropout(rate=0.5)(x)
-        x = tf.keras.layers.Conv2D(filters=Settings.settings(),
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        return x
-
-
-class SqueezeNet_squeeze(object):
-    @staticmethod
-    def squeeze(inputs):
-        # 注意力机制单元
-        input_channels = int(inputs.shape[-1])
-        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
-        x = tf.keras.layers.Dense(int(input_channels / 4))(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.relu6)(x)
-        x = tf.keras.layers.Dense(input_channels)(x)
-        x = tf.keras.layers.Activation(MobileNetv3_small_squeeze.hard_swish)(x)
-        x = tf.keras.layers.Reshape((1, 1, input_channels))(x)
-        x = tf.keras.layers.Multiply()([inputs, x])
-        return x
-
-    @staticmethod
-    def FireModule(inputs, s1, e1, e3, **kwargs):
-        x = tf.keras.layers.Conv2D(filters=s1,
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(inputs)
-        x = SqueezeNet_squeeze.squeeze(x)
-        x = tf.nn.swish(x)
-        y1 = tf.keras.layers.Conv2D(filters=e1,
-                                    kernel_size=(1, 1),
-                                    strides=1,
-                                    padding="same")(x)
-        x = SqueezeNet_squeeze.squeeze(x)
-        y1 = tf.nn.swish(y1)
-        y2 = tf.keras.layers.Conv2D(filters=e3,
-                                    kernel_size=(3, 3),
-                                    strides=1,
-                                    padding="same")(x)
-        x = SqueezeNet_squeeze.squeeze(x)
-        y2 = tf.nn.swish(y2)
-        return tf.concat(values=[y1, y2], axis=-1)
-
-    @staticmethod
-    def SqueezeNet(x, training=None, mask=None):
-        x = tf.keras.layers.Conv2D(filters=96,
-                                   kernel_size=(7, 7),
-                                   strides=2,
-                                   padding="same")(x)
-        x = SqueezeNet_squeeze.squeeze(x)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet_squeeze.FireModule(x, s1=16, e1=64, e3=64)
-        x = SqueezeNet_squeeze.FireModule(x, s1=16, e1=64, e3=64)
-        x = SqueezeNet_squeeze.FireModule(x, s1=32, e1=128, e3=128)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet_squeeze.FireModule(x, s1=32, e1=128, e3=128)
-        x = SqueezeNet_squeeze.FireModule(x, s1=48, e1=192, e3=192)
-        x = SqueezeNet_squeeze.FireModule(x, s1=48, e1=192, e3=192)
-        x = SqueezeNet_squeeze.FireModule(x, s1=64, e1=256, e3=256)
-        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
-                                      strides=2)(x)
-        x = SqueezeNet_squeeze.FireModule(x, s1=64, e1=256, e3=256)
-        x = tf.keras.layers.Dropout(rate=0.5)(x)
-        x = tf.keras.layers.Conv2D(filters=Settings.settings(),
-                                   kernel_size=(1, 1),
-                                   strides=1,
-                                   padding="same")(x)
-        return x
-
-
-# MnasNet
-class MnasNet(object):
-    @staticmethod
-    def conv_bn(x, filters, kernel_size, strides=1, alpha=1, activation=True):
-        filters = MnasNet._make_divisible(filters * alpha)
-        x = tf.keras.layers.Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding='same',
-                                   use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(l=0.0003))(x)
-        x = tf.keras.layers.BatchNormalization(epsilon=1e-3, momentum=0.999)(x)
-        if activation:
-            x = tf.keras.layers.ReLU(max_value=6)(x)
-        return x
-
-    @staticmethod
-    def depthwiseConv_bn(x, depth_multiplier, kernel_size, strides=1):
-        x = tf.keras.layers.DepthwiseConv2D(kernel_size=kernel_size, strides=strides, depth_multiplier=depth_multiplier,
-                                            padding='same', use_bias=False,
-                                            kernel_regularizer=tf.keras.regularizers.l2(l=0.0003))(x)
-        x = tf.keras.layers.BatchNormalization(epsilon=1e-3, momentum=0.999)(x)
-        x = tf.keras.layers.ReLU(max_value=6)(x)
-        return x
-
-    @staticmethod
-    def sepConv_bn_noskip(x, filters, kernel_size, strides=1):
-        x = MnasNet.depthwiseConv_bn(x, depth_multiplier=1, kernel_size=kernel_size, strides=strides)
-        x = MnasNet.conv_bn(x, filters=filters, kernel_size=1, strides=1)
-
-        return x
-
-    @staticmethod
-    def MBConv_idskip(x_input, filters, kernel_size, strides=1, filters_multiplier=1, alpha=1):
-        depthwise_conv_filters = MnasNet._make_divisible(x_input.shape[3])
-        pointwise_conv_filters = MnasNet._make_divisible(filters * alpha)
-
-        x = MnasNet.conv_bn(x_input, filters=depthwise_conv_filters * filters_multiplier, kernel_size=1, strides=1)
-        x = MnasNet.depthwiseConv_bn(x, depth_multiplier=1, kernel_size=kernel_size, strides=strides)
-        x = MnasNet.conv_bn(x, filters=pointwise_conv_filters, kernel_size=1, strides=1, activation=False)
-        if strides == 1 and x.shape[3] == x_input.shape[3]:
-            return tf.keras.layers.add([x_input, x])
-        else:
-            return x
-
-    @staticmethod
-    def _make_divisible(v, divisor=8, min_value=None):
-        if min_value is None:
-            min_value = divisor
-        new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-        if new_v < 0.9 * v:
-            new_v += divisor
-        return new_v
-
-    @staticmethod
-    def MnasNet(x):
-        alpha = 1
-        x = MnasNet.conv_bn(x, 32 * alpha, 3, strides=2)
-        x = MnasNet.sepConv_bn_noskip(x, 16 * alpha, 3, strides=1)
-        # MBConv3 3x3
-        x = MnasNet.MBConv_idskip(x, filters=24, kernel_size=3, strides=2, filters_multiplier=3, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=24, kernel_size=3, strides=1, filters_multiplier=3, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=24, kernel_size=3, strides=1, filters_multiplier=3, alpha=alpha)
-        # MBConv3 5x5
-        x = MnasNet.MBConv_idskip(x, filters=40, kernel_size=5, strides=2, filters_multiplier=3, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=40, kernel_size=5, strides=1, filters_multiplier=3, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=40, kernel_size=5, strides=1, filters_multiplier=3, alpha=alpha)
-        # MBConv6 5x5
-        x = MnasNet.MBConv_idskip(x, filters=80, kernel_size=5, strides=2, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=80, kernel_size=5, strides=1, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=80, kernel_size=5, strides=1, filters_multiplier=6, alpha=alpha)
-        # MBConv6 3x3
-        x = MnasNet.MBConv_idskip(x, filters=96, kernel_size=3, strides=1, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=96, kernel_size=3, strides=1, filters_multiplier=6, alpha=alpha)
-        # MBConv6 5x5
-        x = MnasNet.MBConv_idskip(x, filters=192, kernel_size=5, strides=2, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6, alpha=alpha)
-        x = MnasNet.MBConv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6, alpha=alpha)
-        # MBConv6 3x3
-        x = MnasNet.MBConv_idskip(x, filters=320, kernel_size=3, strides=1, filters_multiplier=6, alpha=alpha)
-        # FC + POOL
-        x = MnasNet.conv_bn(x, filters=1152 * alpha, kernel_size=1, strides=1)
-        return x
-
-
-class CnnHead(object):
-    @staticmethod
-    def cnn_head(x):
-        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), padding='same')(x)
-        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), padding='same')(x)
-        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.BatchNormalization(epsilon=1e-05, axis=1, momentum=0.1)(x)
-        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.ZeroPadding2D(padding=(0, 1))(x)
-        x = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), padding='same')(x)
-        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.BatchNormalization(epsilon=1e-05, axis=1, momentum=0.1)(x)
-        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        x = tf.keras.layers.ZeroPadding2D(padding=(0, 1))(x)
-        x = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), padding='same')(x)
-        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
-        x = tf.nn.swish(x)
-        return x
-
-
 # Efficientdet
 def Efficientdet(width_coefficient, depth_coefficient, default_resolution, dropout_rate=0.2,
                  drop_connect_rate=0.2,
@@ -9112,7 +5402,7 @@ def Efficientdet(width_coefficient, depth_coefficient, default_resolution, dropo
     block_num = 0
     for idx, block_args in enumerate(blocks_args):
         assert block_args.num_repeat > 0
-        # Update block input and output filters based on depth multiplier.
+
         block_args = block_args._replace(
             input_filters=Efficientdet_anchors.round_filters(block_args.input_filters,
                                                              width_coefficient, depth_divisor),
@@ -9141,6 +5431,3007 @@ def Efficientdet(width_coefficient, depth_coefficient, default_resolution, dropo
         elif idx == len(blocks_args) - 1:
             features.append(x)
     return features
+
+
+class Model_Structure(object):
+    @staticmethod
+    def densenet_dense_block(x, blocks, name):
+        for i in range(blocks):
+            x = Model_Structure.densenet_conv_block(x, 32, name=name + '_block' + str(i + 1))
+        return x
+
+    @staticmethod
+    def densenet_transition_block(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1,
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        x = tf.keras.layers.AveragePooling2D(2, strides=2, name=name + '_pool')(x)
+        return x
+
+    @staticmethod
+    def densenet_conv_block(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(
+            x)
+        x1 = tf.keras.layers.Activation('relu', name=name + '_0_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, use_bias=False, name=name + '_1_conv')(
+            x1)
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
+            x1)
+        x1 = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x1)
+        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
+
+    @staticmethod
+    def efficientnet_block(inputs,
+                           activation='swish',
+                           drop_rate=0.,
+                           name='',
+                           filters_in=32,
+                           filters_out=16,
+                           kernel_size=3,
+                           strides=1,
+                           expand_ratio=1,
+                           se_ratio=0.,
+                           id_skip=True):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        # Expansion phase
+        filters = filters_in * expand_ratio
+        if expand_ratio != 1:
+            x = tf.keras.layers.Conv2D(
+                filters,
+                1,
+                padding='same',
+                use_bias=False,
+                kernel_initializer=CONV_KERNEL_INITIALIZER,
+                name=name + 'expand_conv')(
+                inputs)
+            x = tf.keras.layers.BatchNormalization(axis=bn_axis, name=name + 'expand_bn')(x)
+            x = tf.keras.layers.Activation(activation, name=name + 'expand_activation')(x)
+        else:
+            x = inputs
+
+        # Depthwise Convolution
+        if strides == 2:
+            x = tf.keras.layers.ZeroPadding2D(
+                padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, kernel_size),
+                name=name + 'dwconv_pad')(x)
+            conv_pad = 'valid'
+        else:
+            conv_pad = 'same'
+        x = tf.keras.layers.DepthwiseConv2D(
+            kernel_size,
+            strides=strides,
+            padding=conv_pad,
+            use_bias=False,
+            depthwise_initializer=CONV_KERNEL_INITIALIZER,
+            name=name + 'dwconv')(x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, name=name + 'bn')(x)
+        x = tf.keras.layers.Activation(activation, name=name + 'activation')(x)
+
+        # Squeeze and Excitation phase
+        if 0 < se_ratio <= 1:
+            filters_se = max(1, int(filters_in * se_ratio))
+            se = tf.keras.layers.GlobalAveragePooling2D(name=name + 'se_squeeze')(x)
+            se = tf.keras.layers.Reshape((1, 1, filters), name=name + 'se_reshape')(se)
+            se = tf.keras.layers.Conv2D(
+                filters_se,
+                1,
+                padding='same',
+                activation=activation,
+                kernel_initializer=CONV_KERNEL_INITIALIZER,
+                name=name + 'se_reduce')(
+                se)
+            se = tf.keras.layers.Conv2D(
+                filters,
+                1,
+                padding='same',
+                activation='sigmoid',
+                kernel_initializer=CONV_KERNEL_INITIALIZER,
+                name=name + 'se_expand')(se)
+            x = tf.keras.layers.multiply([x, se], name=name + 'se_excite')
+
+        # Output phase
+        x = tf.keras.layers.Conv2D(
+            filters_out,
+            1,
+            padding='same',
+            use_bias=False,
+            kernel_initializer=CONV_KERNEL_INITIALIZER,
+            name=name + 'project_conv')(x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, name=name + 'project_bn')(x)
+        if id_skip and strides == 1 and filters_in == filters_out:
+            if drop_rate > 0:
+                x = tf.keras.layers.Dropout(
+                    drop_rate, noise_shape=(None, 1, 1, 1), name=name + 'drop')(x)
+            x = tf.keras.layers.add([x, inputs], name=name + 'add')
+        return x
+
+    @staticmethod
+    def resnet_block1(x, filters, kernel_size=3, stride=1, conv_shortcut=True, name=None):
+        bn_axis = 3 if tf.python.keras.backend.image_data_format() == 'channels_last' else 1
+
+        if conv_shortcut:
+            shortcut = tf.keras.layers.Conv2D(
+                4 * filters, 1, strides=stride, name=name + '_0_conv')(x)
+            shortcut = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(shortcut)
+        else:
+            shortcut = x
+
+        x = tf.keras.layers.Conv2D(filters, 1, strides=stride, name=name + '_1_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x)
+
+        x = tf.keras.layers.Conv2D(
+            filters, kernel_size, padding='SAME', name=name + '_2_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_2_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_2_relu')(x)
+
+        x = tf.keras.layers.Conv2D(4 * filters, 1, name=name + '_3_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_3_bn')(x)
+
+        x = tf.keras.layers.Add(name=name + '_add')([shortcut, x])
+        x = tf.keras.layers.Activation('relu', name=name + '_out')(x)
+        return x
+
+    @staticmethod
+    def resnet_stack1(x, filters, blocks, stride1=2, name=None):
+
+        x = Model_Structure.resnet_block1(x, filters, stride=stride1, name=name + '_block1')
+        for i in range(2, blocks + 1):
+            x = Model_Structure.resnet_block1(x, filters, conv_shortcut=False, name=name + '_block' + str(i))
+        return x
+
+    @staticmethod
+    def resnet_block2(x, filters, kernel_size=3, stride=1, conv_shortcut=False, name=None):
+
+        bn_axis = 3 if tf.python.keras.backend.image_data_format() == 'channels_last' else 1
+
+        preact = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_preact_bn')(x)
+        preact = tf.keras.layers.Activation('relu', name=name + '_preact_relu')(preact)
+
+        if conv_shortcut:
+            shortcut = tf.keras.layers.Conv2D(
+                4 * filters, 1, strides=stride, name=name + '_0_conv')(preact)
+        else:
+            shortcut = tf.keras.layers.MaxPooling2D(1, strides=stride)(x) if stride > 1 else x
+
+        x = tf.keras.layers.Conv2D(
+            filters, 1, strides=1, use_bias=False, name=name + '_1_conv')(preact)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x)
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name=name + '_2_pad')(x)
+        x = tf.keras.layers.Conv2D(
+            filters,
+            kernel_size,
+            strides=stride,
+            use_bias=False,
+            name=name + '_2_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_2_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_2_relu')(x)
+
+        x = tf.keras.layers.Conv2D(4 * filters, 1, name=name + '_3_conv')(x)
+        x = tf.keras.layers.Add(name=name + '_out')([shortcut, x])
+        return x
+
+    @staticmethod
+    def resnet_stack2(x, filters, blocks, stride1=2, name=None):
+
+        x = Model_Structure.resnet_block2(x, filters, conv_shortcut=True, name=name + '_block1')
+        for i in range(2, blocks):
+            x = Model_Structure.resnet_block2(x, filters, name=name + '_block' + str(i))
+        x = Model_Structure.resnet_block2(x, filters, stride=stride1, name=name + '_block' + str(blocks))
+        return x
+
+    @staticmethod
+    def resnet_block3(x,
+                      filters,
+                      kernel_size=3,
+                      stride=1,
+                      groups=32,
+                      conv_shortcut=True,
+                      name=None):
+
+        bn_axis = 3 if tf.python.keras.backend.image_data_format() == 'channels_last' else 1
+
+        if conv_shortcut:
+            shortcut = tf.keras.layers.Conv2D(
+                (64 // groups) * filters,
+                1,
+                strides=stride,
+                use_bias=False,
+                name=name + '_0_conv')(x)
+            shortcut = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(shortcut)
+        else:
+            shortcut = x
+
+        x = tf.keras.layers.Conv2D(filters, 1, use_bias=False, name=name + '_1_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x)
+
+        c = filters // groups
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name=name + '_2_pad')(x)
+        x = tf.keras.layers.DepthwiseConv2D(
+            kernel_size,
+            strides=stride,
+            depth_multiplier=c,
+            use_bias=False,
+            name=name + '_2_conv')(x)
+        x_shape = tf.python.keras.backend.int_shape(x)[1:-1]
+        x = tf.keras.layers.Reshape(x_shape + (groups, c, c))(x)
+        x = tf.keras.layers.Lambda(
+            lambda x: sum(x[:, :, :, :, i] for i in range(c)),
+            name=name + '_2_reduce')(x)
+        x = tf.keras.layers.Reshape(x_shape + (filters,))(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_2_bn')(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_2_relu')(x)
+
+        x = tf.keras.layers.Conv2D(
+            (64 // groups) * filters, 1, use_bias=False, name=name + '_3_conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_3_bn')(x)
+
+        x = tf.keras.layers.Add(name=name + '_add')([shortcut, x])
+        x = tf.keras.layers.Activation('relu', name=name + '_out')(x)
+        return x
+
+    @staticmethod
+    def resnet_stack3(x, filters, blocks, stride1=2, groups=32, name=None):
+
+        x = Model_Structure.resnet_block3(x, filters, stride=stride1, groups=groups, name=name + '_block1')
+        for i in range(2, blocks + 1):
+            x = Model_Structure.resnet_block3(
+                x,
+                filters,
+                groups=groups,
+                conv_shortcut=False,
+                name=name + '_block' + str(i))
+        return x
+
+    @staticmethod
+    def inception_resnet_conv2d_bn(x,
+                                   filters,
+                                   kernel_size,
+                                   strides=1,
+                                   padding='same',
+                                   activation='relu',
+                                   use_bias=False,
+                                   name=None):
+
+        x = tf.keras.layers.Conv2D(
+            filters,
+            kernel_size,
+            strides=strides,
+            padding=padding,
+            use_bias=use_bias,
+            name=name)(
+            x)
+        if not use_bias:
+            bn_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else 3
+            bn_name = None if name is None else name + '_bn'
+            x = tf.keras.layers.BatchNormalization(axis=bn_axis, scale=False, name=bn_name)(x)
+        if activation is not None:
+            ac_name = None if name is None else name + '_ac'
+            x = tf.keras.layers.Activation(activation, name=ac_name)(x)
+        return x
+
+    @staticmethod
+    def inception_resnet_block(x, scale, block_type, block_idx, activation='relu'):
+        if block_type == 'block35':
+            branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 32, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 32, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 32, 3)
+            branch_2 = Model_Structure.inception_resnet_conv2d_bn(x, 32, 1)
+            branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 48, 3)
+            branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 64, 3)
+            branches = [branch_0, branch_1, branch_2]
+        elif block_type == 'block17':
+            branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 192, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 128, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 160, [1, 7])
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 192, [7, 1])
+            branches = [branch_0, branch_1]
+        elif block_type == 'block8':
+            branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 192, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 192, 1)
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 224, [1, 3])
+            branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 256, [3, 1])
+            branches = [branch_0, branch_1]
+        else:
+            raise ValueError('Unknown Inception-ResNet block type. '
+                             'Expects "block35", "block17" or "block8", '
+                             'but got: ' + str(block_type))
+
+        block_name = block_type + '_' + str(block_idx)
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else 3
+        mixed = tf.keras.layers.Concatenate(
+            axis=channel_axis, name=block_name + '_mixed')(
+            branches)
+        up = Model_Structure.inception_resnet_conv2d_bn(
+            mixed,
+            tf.keras.backend.int_shape(x)[channel_axis],
+            1,
+            activation=None,
+            use_bias=True,
+            name=block_name + '_conv')
+
+        x = tf.keras.layers.Lambda(
+            lambda inputs, scale: inputs[0] + inputs[1] * scale,
+            output_shape=tf.keras.backend.int_shape(x)[1:],
+            arguments={{'scale': scale}},
+            name=block_name)([x, up])
+        if activation is not None:
+            x = tf.keras.layers.Activation(activation, name=block_name + '_ac')(x)
+        return x
+
+    @staticmethod
+    def inception_conv2d_bn(x,
+                            filters,
+                            num_row,
+                            num_col,
+                            padding='same',
+                            strides=(1, 1),
+                            name=None):
+
+        if name is not None:
+            bn_name = name + '_bn'
+            conv_name = name + '_conv'
+        else:
+            bn_name = None
+            conv_name = None
+        if tf.keras.backend.image_data_format() == 'channels_first':
+            bn_axis = 1
+        else:
+            bn_axis = 3
+        x = tf.keras.layers.Conv2D(
+            filters, (num_row, num_col),
+            strides=strides,
+            padding=padding,
+            use_bias=False,
+            name=conv_name)(
+            x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, scale=False, name=bn_name)(x)
+        x = tf.keras.layers.Activation('relu', name=name)(x)
+        return x
+
+    @staticmethod
+    def mobilenet_conv_block(inputs, filters, alpha, kernel=(3, 3), strides=(1, 1)):
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        filters = int(filters * alpha)
+        x = tf.keras.layers.ZeroPadding2D(padding=((0, 1), (0, 1)), name='conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(
+            filters,
+            kernel,
+            padding='valid',
+            use_bias=False,
+            strides=strides,
+            name='conv1')(
+            x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='conv1_bn')(x)
+        return tf.keras.layers.ReLU(6., name='conv1_relu')(x)
+
+    @staticmethod
+    def mobilenet_depthwise_conv_block(inputs,
+                                       pointwise_conv_filters,
+                                       alpha,
+                                       depth_multiplier=1,
+                                       strides=(1, 1),
+                                       block_id=1):
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        pointwise_conv_filters = int(pointwise_conv_filters * alpha)
+
+        if strides == (1, 1):
+            x = inputs
+        else:
+            x = tf.keras.layers.ZeroPadding2D(((0, 1), (0, 1)), name='conv_pad_%d' % block_id)(
+                inputs)
+        x = tf.keras.layers.DepthwiseConv2D((3, 3),
+                                            padding='same' if strides == (1, 1) else 'valid',
+                                            depth_multiplier=depth_multiplier,
+                                            strides=strides,
+                                            use_bias=False,
+                                            name='conv_dw_%d' % block_id)(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='conv_dw_%d_bn' % block_id)(
+            x)
+        x = tf.keras.layers.ReLU(6., name='conv_dw_%d_relu' % block_id)(x)
+
+        x = tf.keras.layers.Conv2D(
+            pointwise_conv_filters, (1, 1),
+            padding='same',
+            use_bias=False,
+            strides=(1, 1),
+            name='conv_pw_%d' % block_id)(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='conv_pw_%d_bn' % block_id)(
+            x)
+        return tf.keras.layers.ReLU(6., name='conv_pw_%d_relu' % block_id)(x)
+
+    @staticmethod
+    def mobilenet_v2_make_divisible(v, divisor, min_value=None):
+        if min_value is None:
+            min_value = divisor
+        new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+        if new_v < 0.9 * v:
+            new_v += divisor
+        return new_v
+
+    @staticmethod
+    def mobilenet_v2_inverted_res_block(inputs, expansion, stride, alpha, filters, block_id):
+
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        in_channels = tf.keras.backend.int_shape(inputs)[channel_axis]
+        pointwise_conv_filters = int(filters * alpha)
+        pointwise_filters = Model_Structure.mobilenet_v2_make_divisible(pointwise_conv_filters, 8)
+        x = inputs
+        prefix = 'block_{{}}_'.format(block_id)
+
+        if block_id:
+            # Expand
+            x = tf.keras.layers.Conv2D(
+                expansion * in_channels,
+                kernel_size=1,
+                padding='same',
+                use_bias=False,
+                activation=None,
+                name=prefix + 'expand')(
+                x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_axis,
+                epsilon=1e-3,
+                momentum=0.999,
+                name=prefix + 'expand_BN')(
+                x)
+            x = tf.keras.layers.ReLU(6., name=prefix + 'expand_relu')(x)
+        else:
+            prefix = 'expanded_conv_'
+
+        # Depthwise
+        if stride == 2:
+            x = tf.keras.layers.ZeroPadding2D(
+                padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, 3),
+                name=prefix + 'pad')(x)
+        x = tf.keras.layers.DepthwiseConv2D(
+            kernel_size=3,
+            strides=stride,
+            activation=None,
+            use_bias=False,
+            padding='same' if stride == 1 else 'valid',
+            name=prefix + 'depthwise')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis,
+            epsilon=1e-3,
+            momentum=0.999,
+            name=prefix + 'depthwise_BN')(
+            x)
+
+        x = tf.keras.layers.ReLU(6., name=prefix + 'depthwise_relu')(x)
+
+        # Project
+        x = tf.keras.layers.Conv2D(
+            pointwise_filters,
+            kernel_size=1,
+            padding='same',
+            use_bias=False,
+            activation=None,
+            name=prefix + 'project')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis,
+            epsilon=1e-3,
+            momentum=0.999,
+            name=prefix + 'project_BN')(
+            x)
+
+        if in_channels == pointwise_filters and stride == 1:
+            return tf.keras.layers.Add(name=prefix + 'add')([inputs, x])
+        return x
+
+    @staticmethod
+    def nasnetmobile_separable_conv_block(ip,
+                                          filters,
+                                          kernel_size=(3, 3),
+                                          strides=(1, 1),
+                                          block_id=None):
+
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        with tf.keras.backend.name_scope('separable_conv_block_%s' % block_id):
+            x = tf.keras.layers.Activation('relu')(ip)
+            if strides == (2, 2):
+                x = tf.keras.layers.ZeroPadding2D(
+                    padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, kernel_size),
+                    name='separable_conv_1_pad_%s' % block_id)(x)
+                conv_pad = 'valid'
+            else:
+                conv_pad = 'same'
+            x = tf.keras.layers.SeparableConv2D(
+                filters,
+                kernel_size,
+                strides=strides,
+                name='separable_conv_1_%s' % block_id,
+                padding=conv_pad,
+                use_bias=False,
+                kernel_initializer='he_normal')(
+                x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_dim,
+                momentum=0.9997,
+                epsilon=1e-3,
+                name='separable_conv_1_bn_%s' % (block_id))(
+                x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x = tf.keras.layers.SeparableConv2D(
+                filters,
+                kernel_size,
+                name='separable_conv_2_%s' % block_id,
+                padding='same',
+                use_bias=False,
+                kernel_initializer='he_normal')(
+                x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_dim,
+                momentum=0.9997,
+                epsilon=1e-3,
+                name='separable_conv_2_bn_%s' % (block_id))(
+                x)
+        return x
+
+    @staticmethod
+    def nasnetmobile_adjust_block(p, ip, filters, block_id=None):
+
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        img_dim = 2 if tf.keras.backend.image_data_format() == 'channels_first' else -2
+
+        ip_shape = tf.keras.backend.int_shape(ip)
+
+        if p is not None:
+            p_shape = tf.keras.backend.int_shape(p)
+
+        with tf.keras.backend.name_scope('adjust_block'):
+            if p is None:
+                p = ip
+
+            elif p_shape[img_dim] != ip_shape[img_dim]:
+                with tf.keras.backend.name_scope('adjust_reduction_block_%s' % block_id):
+                    p = tf.keras.layers.Activation('relu', name='adjust_relu_1_%s' % block_id)(p)
+                    p1 = tf.keras.layers.AveragePooling2D((1, 1),
+                                                          strides=(2, 2),
+                                                          padding='valid',
+                                                          name='adjust_avg_pool_1_%s' % block_id)(
+                        p)
+                    p1 = tf.keras.layers.Conv2D(
+                        filters // 2, (1, 1),
+                        padding='same',
+                        use_bias=False,
+                        name='adjust_conv_1_%s' % block_id,
+                        kernel_initializer='he_normal')(
+                        p1)
+
+                    p2 = tf.keras.layers.ZeroPadding2D(padding=((0, 1), (0, 1)))(p)
+                    p2 = tf.keras.layers.Cropping2D(cropping=((1, 0), (1, 0)))(p2)
+                    p2 = tf.keras.layers.AveragePooling2D((1, 1),
+                                                          strides=(2, 2),
+                                                          padding='valid',
+                                                          name='adjust_avg_pool_2_%s' % block_id)(
+                        p2)
+                    p2 = tf.keras.layers.Conv2D(
+                        filters // 2, (1, 1),
+                        padding='same',
+                        use_bias=False,
+                        name='adjust_conv_2_%s' % block_id,
+                        kernel_initializer='he_normal')(
+                        p2)
+
+                    p = tf.keras.layers.concatenate([p1, p2], axis=channel_dim)
+                    p = tf.keras.layers.BatchNormalization(
+                        axis=channel_dim,
+                        momentum=0.9997,
+                        epsilon=1e-3,
+                        name='adjust_bn_%s' % block_id)(
+                        p)
+
+            elif p_shape[channel_dim] != filters:
+                with tf.keras.backend.name_scope('adjust_projection_block_%s' % block_id):
+                    p = tf.keras.layers.Activation('relu')(p)
+                    p = tf.keras.layers.Conv2D(
+                        filters, (1, 1),
+                        strides=(1, 1),
+                        padding='same',
+                        name='adjust_conv_projection_%s' % block_id,
+                        use_bias=False,
+                        kernel_initializer='he_normal')(
+                        p)
+                    p = tf.keras.layers.BatchNormalization(
+                        axis=channel_dim,
+                        momentum=0.9997,
+                        epsilon=1e-3,
+                        name='adjust_bn_%s' % block_id)(
+                        p)
+        return p
+
+    @staticmethod
+    def nasnetmobile_normal_a_cell(ip, p, filters, block_id=None):
+
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        with tf.keras.backend.name_scope('normal_A_block_%s' % block_id):
+            p = Model_Structure.nasnetmobile_adjust_block(p, ip, filters, block_id)
+
+            h = tf.keras.layers.Activation('relu')(ip)
+            h = tf.keras.layers.Conv2D(
+                filters, (1, 1),
+                strides=(1, 1),
+                padding='same',
+                name='normal_conv_1_%s' % block_id,
+                use_bias=False,
+                kernel_initializer='he_normal')(
+                h)
+            h = tf.keras.layers.BatchNormalization(
+                axis=channel_dim,
+                momentum=0.9997,
+                epsilon=1e-3,
+                name='normal_bn_1_%s' % block_id)(
+                h)
+
+            with tf.keras.backend.name_scope('block_1'):
+                x1_1 = Model_Structure.nasnetmobile_separable_conv_block(
+                    h, filters, kernel_size=(5, 5), block_id='normal_left1_%s' % block_id)
+                x1_2 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p, filters, block_id='normal_right1_%s' % block_id)
+                x1 = tf.keras.layers.add([x1_1, x1_2], name='normal_add_1_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_2'):
+                x2_1 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p, filters, (5, 5), block_id='normal_left2_%s' % block_id)
+                x2_2 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p, filters, (3, 3), block_id='normal_right2_%s' % block_id)
+                x2 = tf.keras.layers.add([x2_1, x2_2], name='normal_add_2_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_3'):
+                x3 = tf.keras.layers.AveragePooling2D((3, 3),
+                                                      strides=(1, 1),
+                                                      padding='same',
+                                                      name='normal_left3_%s' % (block_id))(
+                    h)
+                x3 = tf.keras.layers.add([x3, p], name='normal_add_3_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_4'):
+                x4_1 = tf.keras.layers.AveragePooling2D((3, 3),
+                                                        strides=(1, 1),
+                                                        padding='same',
+                                                        name='normal_left4_%s' % (block_id))(
+                    p)
+                x4_2 = tf.keras.layers.AveragePooling2D((3, 3),
+                                                        strides=(1, 1),
+                                                        padding='same',
+                                                        name='normal_right4_%s' % (block_id))(
+                    p)
+                x4 = tf.keras.layers.add([x4_1, x4_2], name='normal_add_4_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_5'):
+                x5 = Model_Structure.nasnetmobile_separable_conv_block(
+                    h, filters, block_id='normal_left5_%s' % block_id)
+                x5 = tf.keras.layers.add([x5, h], name='normal_add_5_%s' % block_id)
+
+            x = tf.keras.layers.concatenate([p, x1, x2, x3, x4, x5],
+                                            axis=channel_dim,
+                                            name='normal_concat_%s' % block_id)
+        return x, ip
+
+    @staticmethod
+    def nasnetmobile_reduction_a_cell(ip, p, filters, block_id=None):
+
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        with tf.keras.backend.name_scope('reduction_A_block_%s' % block_id):
+            p = Model_Structure.nasnetmobile_adjust_block(p, ip, filters, block_id)
+
+            h = tf.keras.layers.Activation('relu')(ip)
+            h = tf.keras.layers.Conv2D(
+                filters, (1, 1),
+                strides=(1, 1),
+                padding='same',
+                name='reduction_conv_1_%s' % block_id,
+                use_bias=False,
+                kernel_initializer='he_normal')(
+                h)
+            h = tf.keras.layers.BatchNormalization(
+                axis=channel_dim,
+                momentum=0.9997,
+                epsilon=1e-3,
+                name='reduction_bn_1_%s' % block_id)(
+                h)
+            h3 = tf.keras.layers.ZeroPadding2D(
+                padding=tf.python.keras.applications.imagenet_utils.correct_pad(h, 3),
+                name='reduction_pad_1_%s' % block_id)(
+                h)
+
+            with tf.keras.backend.name_scope('block_1'):
+                x1_1 = Model_Structure.nasnetmobile_separable_conv_block(
+                    h,
+                    filters, (5, 5),
+                    strides=(2, 2),
+                    block_id='reduction_left1_%s' % block_id)
+                x1_2 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p,
+                    filters, (7, 7),
+                    strides=(2, 2),
+                    block_id='reduction_right1_%s' % block_id)
+                x1 = tf.keras.layers.add([x1_1, x1_2], name='reduction_add_1_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_2'):
+                x2_1 = tf.keras.layers.MaxPooling2D((3, 3),
+                                                    strides=(2, 2),
+                                                    padding='valid',
+                                                    name='reduction_left2_%s' % block_id)(
+                    h3)
+                x2_2 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p,
+                    filters, (7, 7),
+                    strides=(2, 2),
+                    block_id='reduction_right2_%s' % block_id)
+                x2 = tf.keras.layers.add([x2_1, x2_2], name='reduction_add_2_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_3'):
+                x3_1 = tf.keras.layers.AveragePooling2D((3, 3),
+                                                        strides=(2, 2),
+                                                        padding='valid',
+                                                        name='reduction_left3_%s' % block_id)(
+                    h3)
+                x3_2 = Model_Structure.nasnetmobile_separable_conv_block(
+                    p,
+                    filters, (5, 5),
+                    strides=(2, 2),
+                    block_id='reduction_right3_%s' % block_id)
+                x3 = tf.keras.layers.add([x3_1, x3_2], name='reduction_add3_%s' % block_id)
+
+            with tf.keras.backend.name_scope('block_4'):
+                x4 = tf.keras.layers.AveragePooling2D((3, 3),
+                                                      strides=(1, 1),
+                                                      padding='same',
+                                                      name='reduction_left4_%s' % block_id)(
+                    x1)
+                x4 = tf.keras.layers.add([x2, x4])
+
+            with tf.keras.backend.name_scope('block_5'):
+                x5_1 = Model_Structure.nasnetmobile_separable_conv_block(
+                    x1, filters, (3, 3), block_id='reduction_left4_%s' % block_id)
+                x5_2 = tf.keras.layers.MaxPooling2D((3, 3),
+                                                    strides=(2, 2),
+                                                    padding='valid',
+                                                    name='reduction_right5_%s' % block_id)(
+                    h3)
+                x5 = tf.keras.layers.add([x5_1, x5_2], name='reduction_add4_%s' % block_id)
+
+            x = tf.keras.layers.concatenate([x2, x3, x4, x5],
+                                            axis=channel_dim,
+                                            name='reduction_concat_%s' % block_id)
+            return x, ip
+
+    @staticmethod
+    def mobilenet_v3_depth(v, divisor=8, min_value=None):
+        if min_value is None:
+            min_value = divisor
+        new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+        # Make sure that round down does not go down by more than 10%.
+        if new_v < 0.9 * v:
+            new_v += divisor
+        return new_v
+
+    @staticmethod
+    def mobilenet_v3_se_block(inputs, filters, se_ratio, prefix):
+        x = tf.keras.layers.GlobalAveragePooling2D(name=prefix + 'squeeze_excite/AvgPool')(
+            inputs)
+        if tf.keras.backend.image_data_format() == 'channels_first':
+            x = tf.keras.layers.Reshape((filters, 1, 1))(x)
+        else:
+            x = tf.keras.layers.Reshape((1, 1, filters))(x)
+        x = tf.keras.layers.Conv2D(
+            Model_Structure.mobilenet_v3_depth(filters * se_ratio),
+            kernel_size=1,
+            padding='same',
+            name=prefix + 'squeeze_excite/Conv')(
+            x)
+        x = tf.keras.layers.ReLU(name=prefix + 'squeeze_excite/Relu')(x)
+        x = tf.keras.layers.Conv2D(
+            filters,
+            kernel_size=1,
+            padding='same',
+            name=prefix + 'squeeze_excite/Conv_1')(
+            x)
+        x = tf.keras.layers.ReLU(6.)(x + 3.) * (1. / 6.)
+        x = tf.keras.layers.Multiply(name=prefix + 'squeeze_excite/Mul')([inputs, x])
+        return x
+
+    @staticmethod
+    def mobilenet_v3_inverted_res_block(x, expansion, filters, kernel_size, stride, se_ratio,
+                                        activation, block_id):
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        shortcut = x
+        prefix = 'expanded_conv/'
+        infilters = tf.keras.backend.int_shape(x)[channel_axis]
+        if block_id:
+            # Expand
+            prefix = 'expanded_conv_{{}}/'.format(block_id)
+            x = tf.keras.layers.Conv2D(
+                Model_Structure.mobilenet_v3_depth(infilters * expansion),
+                kernel_size=1,
+                padding='same',
+                use_bias=False,
+                name=prefix + 'expand')(
+                x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_axis,
+                epsilon=1e-3,
+                momentum=0.999,
+                name=prefix + 'expand/BatchNorm')(
+                x)
+            x = activation(x)
+
+        if stride == 2:
+            x = tf.keras.layers.ZeroPadding2D(
+                padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, kernel_size),
+                name=prefix + 'depthwise/pad')(
+                x)
+        x = tf.keras.layers.DepthwiseConv2D(
+            kernel_size,
+            strides=stride,
+            padding='same' if stride == 1 else 'valid',
+            use_bias=False,
+            name=prefix + 'depthwise')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis,
+            epsilon=1e-3,
+            momentum=0.999,
+            name=prefix + 'depthwise/BatchNorm')(
+            x)
+        x = activation(x)
+
+        if se_ratio:
+            x = Model_Structure.mobilenet_v3_se_block(x, Model_Structure.mobilenet_v3_depth(infilters * expansion),
+                                                      se_ratio, prefix)
+
+        x = tf.keras.layers.Conv2D(
+            filters,
+            kernel_size=1,
+            padding='same',
+            use_bias=False,
+            name=prefix + 'project')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis,
+            epsilon=1e-3,
+            momentum=0.999,
+            name=prefix + 'project/BatchNorm')(
+            x)
+
+        if stride == 1 and infilters == filters:
+            x = tf.keras.layers.Add(name=prefix + 'Add')([shortcut, x])
+        return x
+
+    @staticmethod
+    def mnasnet_conv_bn(x, filters, kernel_size, strides=1, alpha=1, activation=True):
+        filters = Model_Structure.mnasnet_make_divisible(filters * alpha)
+        x = tf.keras.layers.Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding='same',
+                                   use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(l=0.0003))(x)
+        x = tf.keras.layers.BatchNormalization(epsilon=1e-3, momentum=0.999)(x)
+        if activation:
+            x = tf.keras.layers.ReLU(max_value=6)(x)
+        return x
+
+    @staticmethod
+    def mnasnet_depthwiseConv_bn(x, depth_multiplier, kernel_size, strides=1):
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=kernel_size, strides=strides, depth_multiplier=depth_multiplier,
+                                            padding='same', use_bias=False,
+                                            kernel_regularizer=tf.keras.regularizers.l2(l=0.0003))(x)
+        x = tf.keras.layers.BatchNormalization(epsilon=1e-3, momentum=0.999)(x)
+        x = tf.keras.layers.ReLU(max_value=6)(x)
+        return x
+
+    @staticmethod
+    def mnasnet_sepconv_bn_noskip(x, filters, kernel_size, strides=1):
+        x = Model_Structure.mnasnet_depthwiseConv_bn(x, depth_multiplier=1, kernel_size=kernel_size, strides=strides)
+        x = Model_Structure.mnasnet_conv_bn(x, filters=filters, kernel_size=1, strides=1)
+        return x
+
+    @staticmethod
+    def mnasnet_mbconv_idskip(x_input, filters, kernel_size, strides=1, filters_multiplier=1, alpha=1):
+        depthwise_conv_filters = Model_Structure.mnasnet_make_divisible(x_input.shape[3])
+        pointwise_conv_filters = Model_Structure.mnasnet_make_divisible(filters * alpha)
+
+        x = Model_Structure.mnasnet_conv_bn(x_input, filters=depthwise_conv_filters * filters_multiplier, kernel_size=1,
+                                            strides=1)
+        x = Model_Structure.mnasnet_depthwiseConv_bn(x, depth_multiplier=1, kernel_size=kernel_size, strides=strides)
+        x = Model_Structure.mnasnet_conv_bn(x, filters=pointwise_conv_filters, kernel_size=1, strides=1,
+                                            activation=False)
+        if strides == 1 and x.shape[3] == x_input.shape[3]:
+            return tf.keras.layers.add([x_input, x])
+        else:
+            return x
+
+    @staticmethod
+    def mnasnet_make_divisible(v, divisor=8, min_value=None):
+        if min_value is None:
+            min_value = divisor
+        new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+        if new_v < 0.9 * v:
+            new_v += divisor
+        return new_v
+
+    @staticmethod
+    def squeezenet_firemodule(inputs, s1, e1, e3):
+        x = tf.keras.layers.Conv2D(filters=s1,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(inputs)
+        x = tf.nn.relu(x)
+        y1 = tf.keras.layers.Conv2D(filters=e1,
+                                    kernel_size=(1, 1),
+                                    strides=1,
+                                    padding="same")(x)
+        y1 = tf.nn.relu(y1)
+        y2 = tf.keras.layers.Conv2D(filters=e3,
+                                    kernel_size=(3, 3),
+                                    strides=1,
+                                    padding="same")(x)
+        y2 = tf.nn.relu(y2)
+        return tf.concat(values=[y1, y2], axis=-1)
+
+    @staticmethod
+    def shufflenet_v2_channel_shuffle(feature, group):
+        channel_num = feature.shape[-1]
+        if channel_num % group != 0:
+            raise ValueError("The group must be divisible by the shape of the last dimension of the feature.")
+        x = tf.reshape(feature, shape=(-1, feature.shape[1], feature.shape[2], group, channel_num // group))
+        x = tf.transpose(x, perm=[0, 1, 2, 4, 3])
+        x = tf.reshape(x, shape=(-1, feature.shape[1], feature.shape[2], channel_num))
+        return x
+
+    @staticmethod
+    def shufflenet_v2_blocks1(inputs, in_channels, out_channels, training=None):
+        branch, x = tf.split(inputs, num_or_size_splits=2, axis=-1)
+        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=1, padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        outputs = tf.concat(values=[branch, x], axis=-1)
+        outputs = Model_Structure.shufflenet_v2_channel_shuffle(feature=outputs, group=2)
+        return outputs
+
+    @staticmethod
+    def shufflenet_v2_blocks2(inputs, in_channels, out_channels, training=None):
+        x = tf.keras.layers.Conv2D(filters=out_channels // 2,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=2, padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Conv2D(filters=out_channels - in_channels,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        branch = tf.keras.layers.DepthwiseConv2D(kernel_size=(3, 3), strides=2, padding="same")(inputs)
+        branch = tf.keras.layers.BatchNormalization()(branch, training=training)
+        branch = tf.keras.layers.Conv2D(filters=in_channels,
+                                        kernel_size=(1, 1),
+                                        strides=1,
+                                        padding="same")(branch)
+        branch = tf.keras.layers.BatchNormalization()(branch, training=training)
+        branch = tf.nn.swish(branch)
+        outputs = tf.concat(values=[x, branch], axis=-1)
+        outputs = Model_Structure.shufflenet_v2_channel_shuffle(feature=outputs, group=2)
+        return outputs
+
+    @staticmethod
+    def shufflenet_v2_make_layer(inputs, repeat_num, in_channels, out_channels):
+        x = Model_Structure.shufflenet_v2_blocks2(inputs, in_channels=in_channels, out_channels=out_channels)
+        for _ in range(1, repeat_num):
+            x = Model_Structure.shufflenet_v2_blocks1(x, in_channels=out_channels, out_channels=out_channels)
+        return x
+
+    @staticmethod
+    def seresnet_seblock(inputs, input_channels, r=16):
+        x = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        x = tf.keras.layers.Dense(units=input_channels // r)(x)
+        x = tf.nn.relu(x)
+        x = tf.keras.layers.Dense(units=input_channels)(x)
+        x = tf.nn.sigmoid(x)
+        x = tf.expand_dims(x, axis=1)
+        x = tf.expand_dims(x, axis=1)
+        output = tf.keras.layers.multiply(inputs=[inputs, x])
+        return output
+
+    @staticmethod
+    def seresnet_bottleneck(inputs, filter_num, stride=1, training=None):
+        identity = tf.keras.layers.Conv2D(filters=filter_num * 4,
+                                          kernel_size=(1, 1),
+                                          strides=stride)(inputs)
+        identity = tf.keras.layers.BatchNormalization()(identity)
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding='same')(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(3, 3),
+                                   strides=stride,
+                                   padding='same')(x)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Conv2D(filters=filter_num * 4,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding='same')(x)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = Model_Structure.seresnet_seblock(x, input_channels=filter_num * 4)
+        output = tf.nn.swish(tf.keras.layers.add([identity, x]))
+        return output
+
+    @staticmethod
+    def seresnet_make_res_block(inputs, filter_num, blocks, stride=1):
+        x = Model_Structure.seresnet_bottleneck(inputs, filter_num, stride=stride)
+        for _ in range(1, blocks):
+            x = Model_Structure.seresnet_bottleneck(x, filter_num, stride=1)
+        return x
+
+    @staticmethod
+    def resnext_basicblock(inputs, filter_num, stride=1, training=None):
+        if stride != 1:
+            residual = tf.keras.layers.Conv2D(filters=filter_num,
+                                              kernel_size=(1, 1),
+                                              strides=stride)(inputs)
+            residual = tf.keras.layers.BatchNormalization()(residual, training=training)
+        else:
+            residual = inputs
+
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(3, 3),
+                                   strides=stride,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(3, 3),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        output = tf.keras.layers.concatenate([residual, x])
+        return output
+
+    @staticmethod
+    def resnext_bottleneck(inputs, filter_num, stride=1, training=None):
+        residual = tf.keras.layers.Conv2D(filters=filter_num * 4,
+                                          kernel_size=(1, 1),
+                                          strides=stride, kernel_initializer=tf.keras.initializers.he_normal())(inputs)
+        residual = tf.keras.layers.BatchNormalization()(residual, training=training)
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Conv2D(filters=filter_num,
+                                   kernel_size=(3, 3),
+                                   strides=stride,
+                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.Conv2D(filters=filter_num * 4,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding='same', kernel_initializer=tf.keras.initializers.he_normal())(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        return tf.nn.relu(tf.keras.layers.add([residual, x]))
+
+    @staticmethod
+    def resnext_make_basic_block_layer(inputs, filter_num, blocks, stride=1):
+        res_block = Model_Structure.resnext_basicblock(inputs, filter_num, stride=stride)
+        for _ in range(1, blocks):
+            res_block = Model_Structure.resnext_basicblock(inputs, filter_num, stride=1)
+        return res_block
+
+    @staticmethod
+    def resnext_make_bottleneck_layer(inputs, filter_num, blocks, stride=1):
+        res_block = Model_Structure.resnext_bottleneck(inputs, filter_num, stride=stride)
+        for _ in range(1, blocks):
+            res_block = Model_Structure.resnext_bottleneck(inputs, filter_num, stride=1)
+        return res_block
+
+    @staticmethod
+    def resnext_bottleneck2(inputs, filters, strides, groups, training=None):
+        x = tf.keras.layers.Conv2D(filters=filters,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.keras.layers.Conv2D(filters=filters,
+                                   kernel_size=(3, 3),
+                                   strides=strides,
+                                   padding="same", )(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.relu(x)
+        x = tf.keras.layers.Conv2D(filters=2 * filters,
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        shortcut = tf.keras.layers.Conv2D(filters=2 * filters,
+                                          kernel_size=(1, 1),
+                                          strides=strides,
+                                          padding="same")(inputs)
+        shortcut = tf.keras.layers.BatchNormalization()(shortcut, training=training)
+        output = tf.nn.relu(tf.keras.layers.add([x, shortcut]))
+        return output
+
+    @staticmethod
+    def resnext_build_ResNeXt_block(inputs, filters, strides, groups, repeat_num):
+        block = Model_Structure.resnext_bottleneck2(inputs, filters=filters,
+                                                    strides=strides,
+                                                    groups=groups)
+        for _ in range(1, repeat_num):
+            block = Model_Structure.resnext_bottleneck2(inputs, filters=filters,
+                                                        strides=1,
+                                                        groups=groups)
+        return block
+
+    @staticmethod
+    def regnet_squeeze_excite_block(input_tensor, ratio=16, input_type='2d', channel_axis=-1):
+        filters = input_tensor.get_shape().as_list()[channel_axis]
+        if input_type == '2d':
+            se_shape = (1, 1, filters)
+            se = tf.keras.layers.GlobalAveragePooling2D(data_format='channels_last')(input_tensor)
+        elif input_type == '1d':
+            se_shape = (1, filters)
+            se = tf.keras.layers.GlobalAveragePooling1D(data_format='channels_last')(input_tensor)
+        else:
+            assert 1 > 2, 'squeeze_excite_block unsupport input type {{}}'.format(input_type)
+        se = tf.keras.layers.Reshape(se_shape)(se)
+        se = tf.keras.layers.Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(
+            se)
+        se = tf.keras.layers.Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
+        x = tf.keras.layers.Multiply()([input_tensor, se])
+        return x
+
+    @staticmethod
+    def regnet_make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
+        x = input_tensor
+        if SEstyle_atten == 'SE':
+            x = Model_Structure.regnet_squeeze_excite_block(x, input_type=input_type)
+        return x
+
+    @staticmethod
+    def regnet_make_stem(input_tensor, filters=32, size=(7, 7), strides=2, channel_axis=-1,
+                         active='relu'):
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=size, strides=strides,
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        return x
+
+    @staticmethod
+    def regnet_make_basic_131_block(input_tensor,
+                                    filters=96,
+                                    group_kernel_size=[3, 3, 3],
+                                    filters_per_group=48,
+                                    stridess=[1, 2, 1], channel_axis=-1, active='relu'):
+        x2 = tf.identity(input_tensor)
+        if 2 in stridess:
+            x2 = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1),
+                                        strides=2,
+                                        padding='same',
+                                        kernel_initializer='he_normal',
+                                        use_bias=False,
+                                        data_format='channels_last')(x2)
+            x2 = tf.keras.layers.BatchNormalization(axis=channel_axis)(x2)
+            x2 = tf.keras.layers.Activation(active)(x2)
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[0],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        x = GroupedConv2D(filters=filters, kernel_size=group_kernel_size, strides=stridess[1],
+                          use_keras=True, padding='same', kernel_initializer='he_normal',
+                          use_bias=False, data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+
+        x = tf.keras.layers.Conv2D(filters, kernel_size=1,
+                                   strides=stridess[2],
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   use_bias=False,
+                                   data_format='channels_last')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis)(x)
+        x = tf.keras.layers.Activation(active)(x)
+        x = Model_Structure.regnet_make_attention(x, input_type='2d')
+        m2 = tf.keras.layers.Add()([x, x2])
+        return m2
+
+    @staticmethod
+    def regnet_make_stage(input_tensor,
+                          n_block=2,
+                          block_width=96,
+                          group_G=48):
+        x = input_tensor
+        x = Model_Structure.regnet_make_basic_131_block(x,
+                                                        filters=block_width,
+                                                        filters_per_group=group_G,
+                                                        stridess=[1, 2, 1])
+        for i in range(1, n_block):
+            x = Model_Structure.regnet_make_basic_131_block(x,
+                                                            filters=block_width,
+                                                            filters_per_group=group_G,
+                                                            stridess=[1, 1, 1])
+        return x
+
+    @staticmethod
+    def resnest_make_stem(input_tensor, stem_width=64, deep_stem=False):
+        x = input_tensor
+        if deep_stem:
+            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=2, padding="same",
+                                       kernel_initializer="he_normal",
+                                       use_bias=False, data_format="channels_last")(x)
+
+            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+            x = tf.keras.layers.Conv2D(stem_width, kernel_size=3, strides=1, padding="same",
+                                       kernel_initializer="he_normal", use_bias=False, data_format="channels_last")(x)
+
+            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+            x = tf.keras.layers.Conv2D(stem_width * 2, kernel_size=3, strides=1, padding="same",
+                                       kernel_initializer="he_normal",
+                                       use_bias=False, data_format="channels_last")(x)
+
+        else:
+            x = tf.keras.layers.Conv2D(stem_width, kernel_size=7, strides=2, padding="same",
+                                       kernel_initializer="he_normal",
+                                       use_bias=False, data_format="channels_last")(x)
+        return x
+
+    @staticmethod
+    def resnest_rsoftmax(input_tensor, filters, radix, groups):
+        x = input_tensor
+        if radix > 1:
+            x = tf.reshape(x, [-1, groups, radix, filters // groups])
+            x = tf.transpose(x, [0, 2, 1, 3])
+            x = tf.keras.activations.softmax(x, axis=1)
+            x = tf.reshape(x, [-1, 1, 1, radix * filters])
+        else:
+            x = tf.keras.layers.Activation("sigmoid")(x)
+        return x
+
+    @staticmethod
+    def resnest_splatconv2d(input_tensor, filters=64, kernel_size=3, stride=1, dilation=1, groups=1, radix=0):
+        x = input_tensor
+        in_channels = input_tensor.shape[-1]
+
+        x = GroupedConv2D(filters=filters * radix, kernel_size=[kernel_size for i in range(groups * radix)],
+                          use_keras=True, padding="same", kernel_initializer="he_normal", use_bias=False,
+                          data_format="channels_last", dilation_rate=dilation)(x)
+
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+        if radix > 1:
+            splited = tf.split(x, radix, axis=-1)
+            gap = sum(splited)
+        else:
+            gap = x
+
+        # print('sum',gap.shape)
+        gap = tf.keras.layers.GlobalAveragePooling2D(data_format="channels_last")(gap)
+        gap = tf.reshape(gap, [-1, 1, 1, filters])
+        # print('adaptive_avg_pool2d',gap.shape)
+        reduction_factor = 4
+        inter_channels = max(in_channels * radix // reduction_factor, 32)
+
+        x = tf.keras.layers.Conv2D(inter_channels, kernel_size=1)(gap)
+
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = tf.keras.layers.Conv2D(filters * radix, kernel_size=1)(x)
+
+        atten = Model_Structure.resnest_rsoftmax(x, filters, radix, groups)
+
+        if radix > 1:
+            logits = tf.split(atten, radix, axis=-1)
+            out = sum([a * b for a, b in zip(splited, logits)])
+        else:
+            out = atten * x
+        return out
+
+    @staticmethod
+    def resnest_make_block(input_tensor, first_block=True, filters=64, stride=2, radix=1, avd=False, avd_first=False,
+                           is_first=False, block_expansion=4, avg_down=True, dilation=1, bottleneck_width=64,
+                           cardinality=1):
+        x = input_tensor
+        inplanes = input_tensor.shape[-1]
+        if stride != 1 or inplanes != filters * block_expansion:
+            short_cut = input_tensor
+            if avg_down:
+                if dilation == 1:
+                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=stride, strides=stride, padding="same",
+                                                                 data_format="channels_last")(
+                        short_cut
+                    )
+                else:
+                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=1, strides=1, padding="same",
+                                                                 data_format="channels_last")(
+                        short_cut)
+                short_cut = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=1, padding="same",
+                                                   kernel_initializer="he_normal", use_bias=False,
+                                                   data_format="channels_last")(
+                    short_cut)
+            else:
+                short_cut = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=stride,
+                                                   padding="same",
+                                                   kernel_initializer="he_normal", use_bias=False,
+                                                   data_format="channels_last")(
+                    short_cut)
+
+            short_cut = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(short_cut)
+        else:
+            short_cut = input_tensor
+
+        group_width = int(filters * (bottleneck_width / 64.0)) * cardinality
+        x = tf.keras.layers.Conv2D(group_width, kernel_size=1, strides=1, padding="same",
+                                   kernel_initializer="he_normal",
+                                   use_bias=False,
+                                   data_format="channels_last")(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+        avd = avd and (stride > 1 or is_first)
+        avd_first = avd_first
+
+        if avd:
+            avd_layer = tf.keras.layers.AveragePooling2D(pool_size=3, strides=stride, padding="same",
+                                                         data_format="channels_last")
+            stride = 1
+
+        if avd and avd_first:
+            x = avd_layer(x)
+
+        if radix >= 1:
+            x = Model_Structure.resnest_splatconv2d(x, filters=group_width, kernel_size=3, stride=stride,
+                                                    dilation=dilation,
+                                                    groups=cardinality, radix=radix)
+        else:
+            x = tf.keras.layers.Conv2D(group_width, kernel_size=3, strides=stride, padding="same",
+                                       kernel_initializer="he_normal",
+                                       dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
+            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+        if avd and not avd_first:
+            x = avd_layer(x)
+            # print('can')
+        x = tf.keras.layers.Conv2D(filters * block_expansion, kernel_size=1, strides=1, padding="same",
+                                   kernel_initializer="he_normal",
+                                   dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+
+        m2 = tf.keras.layers.Add()([x, short_cut])
+        m2 = tf.keras.layers.Activation('Mish_Activation')(m2)
+        return m2
+
+    @staticmethod
+    def resnest_make_block_basic(input_tensor, first_block=True, filters=64, stride=2, radix=1, avd=False,
+                                 avd_first=False,
+                                 is_first=False, block_expansion=4, avg_down=True, dilation=1, bottleneck_width=64,
+                                 cardinality=1):
+        x = input_tensor
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+        short_cut = x
+        inplanes = input_tensor.shape[-1]
+        if stride != 1 or inplanes != filters * block_expansion:
+            if avg_down:
+                if dilation == 1:
+                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=stride, strides=stride, padding="same",
+                                                                 data_format="channels_last")(
+                        short_cut
+                    )
+                else:
+                    short_cut = tf.keras.layers.AveragePooling2D(pool_size=1, strides=1, padding="same",
+                                                                 data_format="channels_last")(
+                        short_cut)
+                short_cut = tf.keras.layers.Conv2D(filters, kernel_size=1, strides=1, padding="same",
+                                                   kernel_initializer="he_normal",
+                                                   use_bias=False, data_format="channels_last")(short_cut)
+            else:
+                short_cut = tf.keras.layers.Conv2D(filters, kernel_size=1, strides=stride, padding="same",
+                                                   kernel_initializer="he_normal",
+                                                   use_bias=False, data_format="channels_last")(short_cut)
+
+        group_width = int(filters * (bottleneck_width / 64.0)) * cardinality
+        avd = avd and (stride > 1 or is_first)
+        avd_first = avd_first
+
+        if avd:
+            avd_layer = tf.keras.layers.AveragePooling2D(pool_size=3, strides=stride, padding="same",
+                                                         data_format="channels_last")
+            stride = 1
+
+        if avd and avd_first:
+            x = avd_layer(x)
+
+        if radix >= 1:
+            x = Model_Structure.resnest_splatconv2d(x, filters=group_width, kernel_size=3, stride=stride,
+                                                    dilation=dilation,
+                                                    groups=cardinality, radix=radix)
+        else:
+            x = tf.keras.layers.Conv2D(filters, kernel_size=3, strides=stride, padding="same",
+                                       kernel_initializer="he_normal",
+                                       dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
+
+        if avd and not avd_first:
+            x = avd_layer(x)
+
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        x = tf.keras.layers.Activation('Mish_Activation')(x)
+        x = tf.keras.layers.Conv2D(filters, kernel_size=3, strides=1, padding="same", kernel_initializer="he_normal",
+                                   dilation_rate=dilation, use_bias=False, data_format="channels_last")(x)
+        m2 = tf.keras.layers.Add()([x, short_cut])
+        return m2
+
+    @staticmethod
+    def resnest_make_layer(input_tensor, blocks=4, filters=64, stride=2, is_first=True, using_basic_block=False,
+                           avd=True, radix=2, avd_first=False):
+        x = input_tensor
+        if using_basic_block is True:
+            x = Model_Structure.resnest_make_block_basic(x, first_block=True, filters=filters, stride=stride,
+                                                         radix=radix,
+                                                         avd=avd, avd_first=avd_first, is_first=is_first)
+
+            for i in range(1, blocks):
+                x = Model_Structure.resnest_make_block_basic(
+                    x, first_block=False, filters=filters, stride=1, radix=radix, avd=avd,
+                    avd_first=avd_first
+                )
+
+        elif using_basic_block is False:
+            x = Model_Structure.resnest_make_block(x, first_block=True, filters=filters, stride=stride, radix=radix,
+                                                   avd=avd,
+                                                   avd_first=avd_first, is_first=is_first)
+
+            for i in range(1, blocks):
+                x = Model_Structure.resnest_make_block(
+                    x, first_block=False, filters=filters, stride=1, radix=radix, avd=avd,
+                    avd_first=avd_first)
+        return x
+
+    @staticmethod
+    def resnest_make_composite_layer(input_tensor, filters=256, kernel_size=1, stride=1, upsample=True):
+        x = input_tensor
+        x = tf.keras.layers.Conv2D(filters, kernel_size, strides=stride, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+        if upsample:
+            x = tf.keras.layers.UpSampling2D(size=2)(x)
+        return x
+
+    @staticmethod
+    def resnest_get_trainable_parameter(shape=(100, 128)):
+        w_init = tf.random_normal_initializer()
+        parameter = tf.Variable(
+            initial_value=w_init(shape=shape,
+                                 dtype='float32'),
+            trainable=True)
+        return parameter
+
+    @staticmethod
+    def resnest_make_transformer_top(x, hidden_dim=512, n_query_pos=100, nheads=8, num_encoder_layers=6,
+                                     num_decoder_layers=6):
+        h = tf.keras.layers.Conv2D(hidden_dim, kernel_size=1, strides=1,
+                                   padding='same', kernel_initializer='he_normal',
+                                   use_bias=True, data_format='channels_last')(x)
+        H, W = h.shape[1], h.shape[2]
+
+        query_pos = Model_Structure.resnest_get_trainable_parameter(shape=(n_query_pos, hidden_dim))
+        row_embed = Model_Structure.resnest_get_trainable_parameter(shape=(100, hidden_dim // 2))
+        col_embed = Model_Structure.resnest_get_trainable_parameter(shape=(100, hidden_dim // 2))
+
+        cat1_col = tf.expand_dims(col_embed[:W], 0)
+        cat1_col = tf.repeat(cat1_col, H, axis=0)
+
+        cat2_row = tf.expand_dims(row_embed[:H], 1)
+        cat2_row = tf.repeat(cat2_row, W, axis=1)
+        pos = tf.concat([cat1_col, cat2_row], axis=-1)
+        pos = tf.expand_dims(tf.reshape(pos, [pos.shape[0] * pos.shape[1], -1]), 0)
+        h = tf.reshape(h, [-1, h.shape[1] * h.shape[2], h.shape[3]])
+        temp_input = pos + h
+
+        h_tag = tf.transpose(h, perm=[0, 2, 1])
+
+        h_tag = tf.keras.layers.Conv1D(query_pos.shape[0], kernel_size=1, strides=1,
+                                       padding='same', kernel_initializer='he_normal',
+                                       use_bias=True, data_format='channels_last')(h_tag)
+
+        h_tag = tf.transpose(h_tag, perm=[0, 2, 1])
+
+        query_pos = tf.expand_dims(query_pos, 0)
+
+        query_pos += h_tag
+        query_pos -= h_tag
+
+        transformer = Transformer(
+            d_model=hidden_dim, nhead=nheads, num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers)
+        atten_out, attention_weights = transformer(temp_input, query_pos)
+        return atten_out
+
+    @staticmethod
+    def sedensenet_dense_block(x, blocks, name):
+        for i in range(blocks):
+            x = Model_Structure.sedensenet_conv_block(x, 32, name=name + '_block' + str(i + 1))
+        return x
+
+    @staticmethod
+    def sedensenet_transition_block(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_bn')(
+            x)
+        x = tf.keras.layers.Activation('Mish_Activation', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1,
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        x = tf.keras.layers.AveragePooling2D(2, strides=2, name=name + '_pool')(x)
+        return x
+
+    @staticmethod
+    def sedensenet_conv_block(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(
+            x)
+        x1 = tf.keras.layers.Activation('Mish_Activation', name=name + '_0_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, use_bias=False, name=name + '_1_conv')(
+            x1)
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
+            x1)
+        x1 = tf.keras.layers.Activation('Mish_Activation', name=name + '_1_relu')(x1)
+        x1 = Model_Structure.regnet_squeeze_excite_block(x1)
+        x1 = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x1)
+        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
+
+
+class Get_Model(object):
+    # DenseNet
+    @staticmethod
+    def DenseNet(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+
+        x = Model_Structure.densenet_dense_block(x, block[0], name='conv2')
+        x = Model_Structure.densenet_transition_block(x, 0.5, name='pool2')
+        x = Model_Structure.densenet_dense_block(x, block[1], name='conv3')
+        x = Model_Structure.densenet_transition_block(x, 0.5, name='pool3')
+        x = Model_Structure.densenet_dense_block(x, block[2], name='conv4')
+        x = Model_Structure.densenet_transition_block(x, 0.5, name='pool4')
+        x = Model_Structure.densenet_dense_block(x, block[3], name='conv5')
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('relu', name='relu')(x)
+        return x
+
+    # EfficientNet
+    @staticmethod
+    def EfficientNet(inputs,
+                     width_coefficient,
+                     depth_coefficient,
+                     default_size=None,
+                     dropout_rate=0.2,
+                     drop_connect_rate=0.2,
+                     depth_divisor=8,
+                     activation='swish',
+                     blocks_args='default', **kwargs):
+        if blocks_args == 'default':
+            blocks_args = [{{
+                'kernel_size': 3,
+                'repeats': 1,
+                'filters_in': 32,
+                'filters_out': 16,
+                'expand_ratio': 1,
+                'id_skip': True,
+                'strides': 1,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 3,
+                'repeats': 2,
+                'filters_in': 16,
+                'filters_out': 24,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 2,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 5,
+                'repeats': 2,
+                'filters_in': 24,
+                'filters_out': 40,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 2,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 3,
+                'repeats': 3,
+                'filters_in': 40,
+                'filters_out': 80,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 2,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 5,
+                'repeats': 3,
+                'filters_in': 80,
+                'filters_out': 112,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 1,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 5,
+                'repeats': 4,
+                'filters_in': 112,
+                'filters_out': 192,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 2,
+                'se_ratio': 0.25
+            }}, {{
+                'kernel_size': 3,
+                'repeats': 1,
+                'filters_in': 192,
+                'filters_out': 320,
+                'expand_ratio': 6,
+                'id_skip': True,
+                'strides': 1,
+                'se_ratio': 0.25
+            }}]
+
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        def round_filters(filters, divisor=depth_divisor):
+            filters *= width_coefficient
+            new_filters = max(divisor, int(filters + divisor / 2) // divisor * divisor)
+            if new_filters < 0.9 * filters:
+                new_filters += divisor
+            return int(new_filters)
+
+        def round_repeats(repeats):
+            return int(math.ceil(depth_coefficient * repeats))
+
+        # Build stem
+        x = inputs
+        x = tf.python.keras.layers.VersionAwareLayers().Rescaling(1. / 255.)(x)
+        x = tf.python.keras.layers.VersionAwareLayers().Normalization(axis=bn_axis)(x)
+
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, 3),
+            name='stem_conv_pad')(x)
+        x = tf.keras.layers.Conv2D(
+            round_filters(32),
+            3,
+            strides=2,
+            padding='valid',
+            use_bias=False,
+            kernel_initializer={{
+                'class_name': 'VarianceScaling',
+                'config': {{
+                    'scale': 2.0,
+                    'mode': 'fan_out',
+                    'distribution': 'truncated_normal'
+                }}
+            }},
+            name='stem_conv')(x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, name='stem_bn')(x)
+        x = tf.keras.layers.Activation(activation, name='stem_activation')(x)
+
+        blocks_args = copy.deepcopy(blocks_args)
+
+        b = 0
+        blocks = float(sum(round_repeats(args['repeats']) for args in blocks_args))
+        for (i, args) in enumerate(blocks_args):
+            assert args['repeats'] > 0
+
+            args['filters_in'] = round_filters(args['filters_in'])
+            args['filters_out'] = round_filters(args['filters_out'])
+
+            for j in range(round_repeats(args.pop('repeats'))):
+
+                if j > 0:
+                    args['strides'] = 1
+                    args['filters_in'] = args['filters_out']
+                x = Model_Structure.efficientnet_block(
+                    x,
+                    activation,
+                    drop_connect_rate * b / blocks,
+                    name='block{{}}{{}}_'.format(i + 1, chr(j + 97)),
+                    **args)
+                b += 1
+
+        x = tf.keras.layers.Conv2D(
+            round_filters(1280),
+            1,
+            padding='same',
+            use_bias=False,
+            kernel_initializer={{
+                'class_name': 'VarianceScaling',
+                'config': {{
+                    'scale': 2.0,
+                    'mode': 'fan_out',
+                    'distribution': 'truncated_normal'
+                }}
+            }},
+            name='top_conv')(x)
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, name='top_bn')(x)
+        x = tf.keras.layers.Activation(activation, name='top_activation')(x)
+
+        if dropout_rate > 0:
+            x = tf.keras.layers.Dropout(dropout_rate, name='top_dropout')(x)
+        return x
+
+    # ResNet
+    @staticmethod
+    def ResNet(inputs, block, use_bias=True, preact=False, **kwargs):
+        def stack_fn(x):
+            x = Model_Structure.resnet_stack1(x, 64, block[0], stride1=1, name='conv2')
+            x = Model_Structure.resnet_stack1(x, 128, block[1], name='conv3')
+            x = Model_Structure.resnet_stack1(x, 256, block[2], name='conv4')
+            return Model_Structure.resnet_stack1(x, 512, block[3], name='conv5')
+
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=((3, 3), (3, 3)), name='conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=use_bias, name='conv1_conv')(x)
+
+        if not preact:
+            x = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name='conv1_bn')(x)
+            x = tf.keras.layers.Activation('relu', name='conv1_relu')(x)
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad')(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1_pool')(x)
+
+        x = stack_fn(x)
+        return x
+
+    # ResNet_V2
+    @staticmethod
+    def ResNetV2(inputs, block, use_bias=True, preact=True, **kwargs):
+        def stack_fn(x):
+            x = Model_Structure.resnet_stack2(x, 64, block[0], name='conv2')
+            x = Model_Structure.resnet_stack2(x, 128, block[1], name='conv3')
+            x = Model_Structure.resnet_stack2(x, 256, block[2], name='conv4')
+            return Model_Structure.resnet_stack2(x, 512, block[3], stride1=1, name='conv5')
+
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=((3, 3), (3, 3)), name='conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=use_bias, name='conv1_conv')(x)
+
+        if not preact:
+            x = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name='conv1_bn')(x)
+            x = tf.keras.layers.Activation('relu', name='conv1_relu')(x)
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad')(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1_pool')(x)
+
+        x = stack_fn(x)
+        return x
+
+    # InceptionResNetV2
+    @staticmethod
+    def InceptionResNetV2(inputs, **kwargs):
+        x = Model_Structure.inception_resnet_conv2d_bn(inputs, 32, 3, strides=2, padding='valid')
+        x = Model_Structure.inception_resnet_conv2d_bn(x, 32, 3, padding='valid')
+        x = Model_Structure.inception_resnet_conv2d_bn(x, 64, 3)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2)(x)
+        x = Model_Structure.inception_resnet_conv2d_bn(x, 80, 1, padding='valid')
+        x = Model_Structure.inception_resnet_conv2d_bn(x, 192, 3, padding='valid')
+        x = tf.keras.layers.MaxPooling2D(3, strides=2)(x)
+
+        # Mixed 5b (Inception-A block): 35 x 35 x 320
+        branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 96, 1)
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 48, 1)
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 64, 5)
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(x, 64, 1)
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 96, 3)
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 96, 3)
+        branch_pool = tf.keras.layers.AveragePooling2D(3, strides=1, padding='same')(x)
+        branch_pool = Model_Structure.inception_resnet_conv2d_bn(branch_pool, 64, 1)
+        branches = [branch_0, branch_1, branch_2, branch_pool]
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else 3
+        x = tf.keras.layers.Concatenate(axis=channel_axis, name='mixed_5b')(branches)
+
+        # 10x block35 (Inception-ResNet-A block): 35 x 35 x 320
+        for block_idx in range(1, 11):
+            x = Model_Structure.inception_resnet_block(
+                x, scale=0.17, block_type='block35', block_idx=block_idx)
+
+        # Mixed 6a (Reduction-A block): 17 x 17 x 1088
+        branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 384, 3, strides=2, padding='valid')
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 256, 1)
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 256, 3)
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 384, 3, strides=2, padding='valid')
+        branch_pool = tf.keras.layers.MaxPooling2D(3, strides=2, padding='valid')(x)
+        branches = [branch_0, branch_1, branch_pool]
+        x = tf.keras.layers.Concatenate(axis=channel_axis, name='mixed_6a')(branches)
+
+        # 20x block17 (Inception-ResNet-B block): 17 x 17 x 1088
+        for block_idx in range(1, 21):
+            x = Model_Structure.inception_resnet_block(
+                x, scale=0.1, block_type='block17', block_idx=block_idx)
+
+        # Mixed 7a (Reduction-B block): 8 x 8 x 2080
+        branch_0 = Model_Structure.inception_resnet_conv2d_bn(x, 256, 1)
+        branch_0 = Model_Structure.inception_resnet_conv2d_bn(branch_0, 384, 3, strides=2, padding='valid')
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(x, 256, 1)
+        branch_1 = Model_Structure.inception_resnet_conv2d_bn(branch_1, 288, 3, strides=2, padding='valid')
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(x, 256, 1)
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 288, 3)
+        branch_2 = Model_Structure.inception_resnet_conv2d_bn(branch_2, 320, 3, strides=2, padding='valid')
+        branch_pool = tf.keras.layers.MaxPooling2D(3, strides=2, padding='valid')(x)
+        branches = [branch_0, branch_1, branch_2, branch_pool]
+        x = tf.keras.layers.Concatenate(axis=channel_axis, name='mixed_7a')(branches)
+
+        # 10x block8 (Inception-ResNet-C block): 8 x 8 x 2080
+        for block_idx in range(1, 10):
+            x = Model_Structure.inception_resnet_block(
+                x, scale=0.2, block_type='block8', block_idx=block_idx)
+        x = Model_Structure.inception_resnet_block(
+            x, scale=1., activation=None, block_type='block8', block_idx=10)
+
+        # Final convolution block: 8 x 8 x 1536
+        x = Model_Structure.inception_resnet_conv2d_bn(x, 1536, 1, name='conv_7b')
+        return x
+
+    # InceptionV3
+    @staticmethod
+    def InceptionV3(inputs, **kwargs):
+        if tf.keras.backend.image_data_format() == 'channels_first':
+            channel_axis = 1
+        else:
+            channel_axis = 3
+
+        x = Model_Structure.inception_conv2d_bn(inputs, 32, 3, 3, strides=(2, 2), padding='valid')
+        x = Model_Structure.inception_conv2d_bn(x, 32, 3, 3, padding='valid')
+        x = Model_Structure.inception_conv2d_bn(x, 64, 3, 3)
+        x = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
+
+        x = Model_Structure.inception_conv2d_bn(x, 80, 1, 1, padding='valid')
+        x = Model_Structure.inception_conv2d_bn(x, 192, 3, 3, padding='valid')
+        x = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
+
+        # mixed 0: 35 x 35 x 256
+        branch1x1 = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+
+        branch5x5 = Model_Structure.inception_conv2d_bn(x, 48, 1, 1)
+        branch5x5 = Model_Structure.inception_conv2d_bn(branch5x5, 64, 5, 5)
+
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+
+        branch_pool = tf.keras.layers.AveragePooling2D(
+            (3, 3), strides=(1, 1), padding='same')(x)
+        branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 32, 1, 1)
+        x = tf.keras.layers.concatenate([branch1x1, branch5x5, branch3x3dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed0')
+
+        # mixed 1: 35 x 35 x 288
+        branch1x1 = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+
+        branch5x5 = Model_Structure.inception_conv2d_bn(x, 48, 1, 1)
+        branch5x5 = Model_Structure.inception_conv2d_bn(branch5x5, 64, 5, 5)
+
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+
+        branch_pool = tf.keras.layers.AveragePooling2D(
+            (3, 3), strides=(1, 1), padding='same')(x)
+        branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 64, 1, 1)
+        x = tf.keras.layers.concatenate([branch1x1, branch5x5, branch3x3dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed1')
+
+        # mixed 2: 35 x 35 x 288
+        branch1x1 = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+
+        branch5x5 = Model_Structure.inception_conv2d_bn(x, 48, 1, 1)
+        branch5x5 = Model_Structure.inception_conv2d_bn(branch5x5, 64, 5, 5)
+
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+
+        branch_pool = tf.keras.layers.AveragePooling2D(
+            (3, 3), strides=(1, 1), padding='same')(x)
+        branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 64, 1, 1)
+        x = tf.keras.layers.concatenate([branch1x1, branch5x5, branch3x3dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed2')
+
+        # mixed 3: 17 x 17 x 768
+        branch3x3 = Model_Structure.inception_conv2d_bn(x, 384, 3, 3, strides=(2, 2), padding='valid')
+
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(x, 64, 1, 1)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 96, 3, 3)
+        branch3x3dbl = Model_Structure.inception_conv2d_bn(
+            branch3x3dbl, 96, 3, 3, strides=(2, 2), padding='valid')
+
+        branch_pool = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
+        x = tf.keras.layers.concatenate([branch3x3, branch3x3dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed3')
+
+        # mixed 4: 17 x 17 x 768
+        branch1x1 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+
+        branch7x7 = Model_Structure.inception_conv2d_bn(x, 128, 1, 1)
+        branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 128, 1, 7)
+        branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 192, 7, 1)
+
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(x, 128, 1, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 128, 7, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 128, 1, 7)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 128, 7, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 1, 7)
+
+        branch_pool = tf.keras.layers.AveragePooling2D(
+            (3, 3), strides=(1, 1), padding='same')(x)
+        branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 192, 1, 1)
+        x = tf.keras.layers.concatenate([branch1x1, branch7x7, branch7x7dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed4')
+
+        # mixed 5, 6: 17 x 17 x 768
+        for i in range(2):
+            branch1x1 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+
+            branch7x7 = Model_Structure.inception_conv2d_bn(x, 160, 1, 1)
+            branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 160, 1, 7)
+            branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 192, 7, 1)
+
+            branch7x7dbl = Model_Structure.inception_conv2d_bn(x, 160, 1, 1)
+            branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 160, 7, 1)
+            branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 160, 1, 7)
+            branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 160, 7, 1)
+            branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 1, 7)
+
+            branch_pool = tf.keras.layers.AveragePooling2D((3, 3),
+                                                           strides=(1, 1),
+                                                           padding='same')(
+                x)
+            branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 192, 1, 1)
+            x = tf.keras.layers.concatenate([branch1x1, branch7x7, branch7x7dbl, branch_pool],
+                                            axis=channel_axis,
+                                            name='mixed' + str(5 + i))
+
+        # mixed 7: 17 x 17 x 768
+        branch1x1 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+
+        branch7x7 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+        branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 192, 1, 7)
+        branch7x7 = Model_Structure.inception_conv2d_bn(branch7x7, 192, 7, 1)
+
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 7, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 1, 7)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 7, 1)
+        branch7x7dbl = Model_Structure.inception_conv2d_bn(branch7x7dbl, 192, 1, 7)
+
+        branch_pool = tf.keras.layers.AveragePooling2D(
+            (3, 3), strides=(1, 1), padding='same')(x)
+        branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 192, 1, 1)
+        x = tf.keras.layers.concatenate([branch1x1, branch7x7, branch7x7dbl, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed7')
+
+        # mixed 8: 8 x 8 x 1280
+        branch3x3 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+        branch3x3 = Model_Structure.inception_conv2d_bn(branch3x3, 320, 3, 3, strides=(2, 2), padding='valid')
+
+        branch7x7x3 = Model_Structure.inception_conv2d_bn(x, 192, 1, 1)
+        branch7x7x3 = Model_Structure.inception_conv2d_bn(branch7x7x3, 192, 1, 7)
+        branch7x7x3 = Model_Structure.inception_conv2d_bn(branch7x7x3, 192, 7, 1)
+        branch7x7x3 = Model_Structure.inception_conv2d_bn(
+            branch7x7x3, 192, 3, 3, strides=(2, 2), padding='valid')
+
+        branch_pool = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
+        x = tf.keras.layers.concatenate([branch3x3, branch7x7x3, branch_pool],
+                                        axis=channel_axis,
+                                        name='mixed8')
+
+        # mixed 9: 8 x 8 x 2048
+        for i in range(2):
+            branch1x1 = Model_Structure.inception_conv2d_bn(x, 320, 1, 1)
+
+            branch3x3 = Model_Structure.inception_conv2d_bn(x, 384, 1, 1)
+            branch3x3_1 = Model_Structure.inception_conv2d_bn(branch3x3, 384, 1, 3)
+            branch3x3_2 = Model_Structure.inception_conv2d_bn(branch3x3, 384, 3, 1)
+            branch3x3 = tf.keras.layers.concatenate([branch3x3_1, branch3x3_2],
+                                                    axis=channel_axis,
+                                                    name='mixed9_' + str(i))
+
+            branch3x3dbl = Model_Structure.inception_conv2d_bn(x, 448, 1, 1)
+            branch3x3dbl = Model_Structure.inception_conv2d_bn(branch3x3dbl, 384, 3, 3)
+            branch3x3dbl_1 = Model_Structure.inception_conv2d_bn(branch3x3dbl, 384, 1, 3)
+            branch3x3dbl_2 = Model_Structure.inception_conv2d_bn(branch3x3dbl, 384, 3, 1)
+            branch3x3dbl = tf.keras.layers.concatenate([branch3x3dbl_1, branch3x3dbl_2],
+                                                       axis=channel_axis)
+
+            branch_pool = tf.keras.layers.AveragePooling2D((3, 3),
+                                                           strides=(1, 1),
+                                                           padding='same')(
+                x)
+            branch_pool = Model_Structure.inception_conv2d_bn(branch_pool, 192, 1, 1)
+            x = tf.keras.layers.concatenate([branch1x1, branch3x3, branch3x3dbl, branch_pool],
+                                            axis=channel_axis,
+                                            name='mixed' + str(9 + i))
+            return x
+
+    # MobileNet
+    @staticmethod
+    def MobileNet(inputs,
+                  alpha=1.0,
+                  depth_multiplier=1, **kwargs):
+        x = Model_Structure.mobilenet_conv_block(inputs, 32, alpha, strides=(2, 2))
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1)
+
+        x = Model_Structure.mobilenet_depthwise_conv_block(
+            x, 128, alpha, depth_multiplier, strides=(2, 2), block_id=2)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3)
+
+        x = Model_Structure.mobilenet_depthwise_conv_block(
+            x, 256, alpha, depth_multiplier, strides=(2, 2), block_id=4)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5)
+
+        x = Model_Structure.mobilenet_depthwise_conv_block(
+            x, 512, alpha, depth_multiplier, strides=(2, 2), block_id=6)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=7)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=8)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11)
+
+        x = Model_Structure.mobilenet_depthwise_conv_block(
+            x, 1024, alpha, depth_multiplier, strides=(2, 2), block_id=12)
+        x = Model_Structure.mobilenet_depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13)
+        return x
+
+    # MobileNetV2
+    @staticmethod
+    def MobileNetV2(inputs,
+                    alpha=1.0, **kwargs):
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        first_block_filters = Model_Structure.mobilenet_v2_make_divisible(32 * alpha, 8)
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=tf.python.keras.applications.imagenet_utils.correct_pad(inputs, 3),
+            name='Conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(
+            first_block_filters,
+            kernel_size=3,
+            strides=(2, 2),
+            padding='valid',
+            use_bias=False,
+            name='Conv1')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3, momentum=0.999, name='bn_Conv1')(
+            x)
+        x = tf.keras.layers.ReLU(6., name='Conv1_relu')(x)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=16, alpha=alpha, stride=1, expansion=1, block_id=0)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=24, alpha=alpha, stride=2, expansion=6, block_id=1)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=24, alpha=alpha, stride=1, expansion=6, block_id=2)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=32, alpha=alpha, stride=2, expansion=6, block_id=3)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=32, alpha=alpha, stride=1, expansion=6, block_id=4)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=32, alpha=alpha, stride=1, expansion=6, block_id=5)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=64, alpha=alpha, stride=2, expansion=6, block_id=6)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=64, alpha=alpha, stride=1, expansion=6, block_id=7)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=64, alpha=alpha, stride=1, expansion=6, block_id=8)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=64, alpha=alpha, stride=1, expansion=6, block_id=9)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=96, alpha=alpha, stride=1, expansion=6, block_id=10)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=96, alpha=alpha, stride=1, expansion=6, block_id=11)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=96, alpha=alpha, stride=1, expansion=6, block_id=12)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=160, alpha=alpha, stride=2, expansion=6, block_id=13)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=160, alpha=alpha, stride=1, expansion=6, block_id=14)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=160, alpha=alpha, stride=1, expansion=6, block_id=15)
+
+        x = Model_Structure.mobilenet_v2_inverted_res_block(
+            x, filters=320, alpha=alpha, stride=1, expansion=6, block_id=16)
+
+        # no alpha applied to last conv as stated in the paper:
+        # if the width multiplier is greater than 1 we
+        # increase the number of output channels
+        if alpha > 1.0:
+            last_block_filters = Model_Structure.mobilenet_v2_make_divisible(1280 * alpha, 8)
+        else:
+            last_block_filters = 1280
+
+        x = tf.keras.layers.Conv2D(
+            last_block_filters, kernel_size=1, use_bias=False, name='Conv_1')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3, momentum=0.999, name='Conv_1_bn')(
+            x)
+        x = tf.keras.layers.ReLU(6., name='out_relu')(x)
+        return x
+
+    # Xception
+    @staticmethod
+    def Xception(inputs, **kwargs):
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        x = tf.keras.layers.Conv2D(
+            32, (3, 3),
+            strides=(2, 2),
+            use_bias=False,
+            name='block1_conv1')(inputs)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block1_conv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block1_conv1_act')(x)
+        x = tf.keras.layers.Conv2D(64, (3, 3), use_bias=False, name='block1_conv2')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block1_conv2_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block1_conv2_act')(x)
+
+        residual = tf.keras.layers.Conv2D(
+            128, (1, 1), strides=(2, 2), padding='same', use_bias=False)(x)
+        residual = tf.keras.layers.BatchNormalization(axis=channel_axis)(residual)
+
+        x = tf.keras.layers.SeparableConv2D(
+            128, (3, 3), padding='same', use_bias=False, name='block2_sepconv1')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block2_sepconv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block2_sepconv2_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            128, (3, 3), padding='same', use_bias=False, name='block2_sepconv2')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block2_sepconv2_bn')(x)
+
+        x = tf.keras.layers.MaxPooling2D((3, 3),
+                                         strides=(2, 2),
+                                         padding='same',
+                                         name='block2_pool')(x)
+        x = tf.keras.layers.add([x, residual])
+
+        residual = tf.keras.layers.Conv2D(
+            256, (1, 1), strides=(2, 2), padding='same', use_bias=False)(x)
+        residual = tf.keras.layers.BatchNormalization(axis=channel_axis)(residual)
+
+        x = tf.keras.layers.Activation('relu', name='block3_sepconv1_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            256, (3, 3), padding='same', use_bias=False, name='block3_sepconv1')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block3_sepconv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block3_sepconv2_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            256, (3, 3), padding='same', use_bias=False, name='block3_sepconv2')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block3_sepconv2_bn')(x)
+
+        x = tf.keras.layers.MaxPooling2D((3, 3),
+                                         strides=(2, 2),
+                                         padding='same',
+                                         name='block3_pool')(x)
+        x = tf.keras.layers.add([x, residual])
+
+        residual = tf.keras.layers.Conv2D(
+            728, (1, 1), strides=(2, 2), padding='same', use_bias=False)(x)
+        residual = tf.keras.layers.BatchNormalization(axis=channel_axis)(residual)
+
+        x = tf.keras.layers.Activation('relu', name='block4_sepconv1_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            728, (3, 3), padding='same', use_bias=False, name='block4_sepconv1')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block4_sepconv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block4_sepconv2_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            728, (3, 3), padding='same', use_bias=False, name='block4_sepconv2')(x)
+        x = tf.keras.layers.BatchNormalization(axis=channel_axis, name='block4_sepconv2_bn')(x)
+
+        x = tf.keras.layers.MaxPooling2D((3, 3),
+                                         strides=(2, 2),
+                                         padding='same',
+                                         name='block4_pool')(x)
+        x = tf.keras.layers.add([x, residual])
+
+        for i in range(8):
+            residual = x
+            prefix = 'block' + str(i + 5)
+
+            x = tf.keras.layers.Activation('relu', name=prefix + '_sepconv1_act')(x)
+            x = tf.keras.layers.SeparableConv2D(
+                728, (3, 3),
+                padding='same',
+                use_bias=False,
+                name=prefix + '_sepconv1')(x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_axis, name=prefix + '_sepconv1_bn')(x)
+            x = tf.keras.layers.Activation('relu', name=prefix + '_sepconv2_act')(x)
+            x = tf.keras.layers.SeparableConv2D(
+                728, (3, 3),
+                padding='same',
+                use_bias=False,
+                name=prefix + '_sepconv2')(x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_axis, name=prefix + '_sepconv2_bn')(x)
+            x = tf.keras.layers.Activation('relu', name=prefix + '_sepconv3_act')(x)
+            x = tf.keras.layers.SeparableConv2D(
+                728, (3, 3),
+                padding='same',
+                use_bias=False,
+                name=prefix + '_sepconv3')(x)
+            x = tf.keras.layers.BatchNormalization(
+                axis=channel_axis, name=prefix + '_sepconv3_bn')(x)
+
+            x = tf.keras.layers.add([x, residual])
+
+        residual = tf.keras.layers.Conv2D(
+            1024, (1, 1), strides=(2, 2), padding='same', use_bias=False)(x)
+        residual = tf.keras.layers.BatchNormalization(axis=channel_axis)(residual)
+
+        x = tf.keras.layers.Activation('relu', name='block13_sepconv1_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            728, (3, 3), padding='same', use_bias=False, name='block13_sepconv1')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='block13_sepconv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block13_sepconv2_act')(x)
+        x = tf.keras.layers.SeparableConv2D(
+            1024, (3, 3), padding='same', use_bias=False, name='block13_sepconv2')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='block13_sepconv2_bn')(x)
+
+        x = tf.keras.layers.MaxPooling2D((3, 3),
+                                         strides=(2, 2),
+                                         padding='same',
+                                         name='block13_pool')(x)
+        x = tf.keras.layers.add([x, residual])
+
+        x = tf.keras.layers.SeparableConv2D(
+            1536, (3, 3), padding='same', use_bias=False, name='block14_sepconv1')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='block14_sepconv1_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block14_sepconv1_act')(x)
+
+        x = tf.keras.layers.SeparableConv2D(
+            2048, (3, 3), padding='same', use_bias=False, name='block14_sepconv2')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, name='block14_sepconv2_bn')(x)
+        x = tf.keras.layers.Activation('relu', name='block14_sepconv2_act')(x)
+        return x
+
+    # NASNetMobile
+    @staticmethod
+    def NASNetMobile(inputs, penultimate_filters=1056,
+                     num_blocks=4,
+                     stem_block_filters=32,
+                     skip_reduction=False,
+                     filter_multiplier=2, **kwargs):
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        filters = penultimate_filters // 24
+
+        x = tf.keras.layers.Conv2D(
+            stem_block_filters, (3, 3),
+            strides=(2, 2),
+            padding='valid',
+            use_bias=False,
+            name='stem_conv1',
+            kernel_initializer='he_normal')(
+            inputs)
+
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_dim, momentum=0.9997, epsilon=1e-3, name='stem_bn1')(
+            x)
+
+        p = None
+        x, p = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters // (filter_multiplier ** 2), block_id='stem_1')
+        x, p = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters // filter_multiplier, block_id='stem_2')
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(x, p, filters, block_id='%d' % (i))
+
+        x, p0 = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters * filter_multiplier, block_id='reduce_%d' % (num_blocks))
+
+        p = p0 if not skip_reduction else p
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(
+                x, p, filters * filter_multiplier, block_id='%d' % (num_blocks + i + 1))
+
+        x, p0 = Model_Structure.nasnetmobile_reduction_a_cell(
+            x,
+            p,
+            filters * filter_multiplier ** 2,
+            block_id='reduce_%d' % (2 * num_blocks))
+
+        p = p0 if not skip_reduction else p
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(
+                x,
+                p,
+                filters * filter_multiplier ** 2,
+                block_id='%d' % (2 * num_blocks + i + 1))
+
+        x = tf.keras.layers.Activation('relu')(x)
+        return x
+
+    # NASNetLarge
+    @staticmethod
+    def NASNetLarge(inputs, penultimate_filters=4032,
+                    num_blocks=6,
+                    stem_block_filters=96,
+                    skip_reduction=True,
+                    filter_multiplier=2, **kwargs):
+        channel_dim = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+        filters = penultimate_filters // 24
+
+        x = tf.keras.layers.Conv2D(
+            stem_block_filters, (3, 3),
+            strides=(2, 2),
+            padding='valid',
+            use_bias=False,
+            name='stem_conv1',
+            kernel_initializer='he_normal')(
+            inputs)
+
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_dim, momentum=0.9997, epsilon=1e-3, name='stem_bn1')(
+            x)
+
+        p = None
+        x, p = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters // (filter_multiplier ** 2), block_id='stem_1')
+        x, p = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters // filter_multiplier, block_id='stem_2')
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(x, p, filters, block_id='%d' % (i))
+
+        x, p0 = Model_Structure.nasnetmobile_reduction_a_cell(
+            x, p, filters * filter_multiplier, block_id='reduce_%d' % (num_blocks))
+
+        p = p0 if not skip_reduction else p
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(
+                x, p, filters * filter_multiplier, block_id='%d' % (num_blocks + i + 1))
+
+        x, p0 = Model_Structure.nasnetmobile_reduction_a_cell(
+            x,
+            p,
+            filters * filter_multiplier ** 2,
+            block_id='reduce_%d' % (2 * num_blocks))
+
+        p = p0 if not skip_reduction else p
+
+        for i in range(num_blocks):
+            x, p = Model_Structure.nasnetmobile_normal_a_cell(
+                x,
+                p,
+                filters * filter_multiplier ** 2,
+                block_id='%d' % (2 * num_blocks + i + 1))
+
+        x = tf.keras.layers.Activation('relu')(x)
+        return x
+
+    # MobileNetV3Small
+    @staticmethod
+    def MobileNetV3Small(inputs, last_point_ch=1024, alpha=1.0,
+                         minimalistic=False, model_type='small', weights=None, **kwargs):
+
+        def hard_sigmoid(x):
+            return tf.keras.layers.ReLU(6.)(x + 3.) * (1. / 6.)
+
+        def relu(x):
+            return tf.keras.layers.ReLU()(x)
+
+        def stack_fn(x, kernel, activation, se_ratio):
+            def depth(d):
+                return Model_Structure.mobilenet_v3_depth(d * alpha)
+
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 1, depth(16), 3, 2, se_ratio, relu, 0)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 72. / 16, depth(24), 3, 2, None, relu, 1)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 88. / 24, depth(24), 3, 1, None, relu, 2)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 4, depth(40), kernel, 2, se_ratio, activation, 3)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(40), kernel, 1, se_ratio, activation, 4)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(40), kernel, 1, se_ratio, activation, 5)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(48), kernel, 1, se_ratio, activation, 6)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(48), kernel, 1, se_ratio, activation, 7)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(96), kernel, 2, se_ratio, activation, 8)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(96), kernel, 1, se_ratio, activation, 9)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(96), kernel, 1, se_ratio, activation, 10)
+
+            return x
+
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        if minimalistic:
+            kernel = 3
+            activation = relu
+            se_ratio = None
+        else:
+            kernel = 5
+            activation = hard_sigmoid
+            se_ratio = 0.25
+
+        x = inputs
+        x = tf.python.keras.layers.VersionAwareLayers().Rescaling(1. / 255.)(x)
+        x = tf.keras.layers.Conv2D(
+            16,
+            kernel_size=3,
+            strides=(2, 2),
+            padding='same',
+            use_bias=False,
+            name='Conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3,
+            momentum=0.999, name='Conv/BatchNorm')(x)
+        x = activation(x)
+
+        x = stack_fn(x, kernel, activation, se_ratio)
+
+        last_conv_ch = Model_Structure.mobilenet_v3_depth(tf.keras.backend.int_shape(x)[channel_axis] * 6)
+
+        # if the width multiplier is greater than 1 we
+        # increase the number of output channels
+        if alpha > 1.0:
+            last_point_ch = Model_Structure.mobilenet_v3_depth(last_point_ch * alpha)
+        x = tf.keras.layers.Conv2D(
+            last_conv_ch,
+            kernel_size=1,
+            padding='same',
+            use_bias=False,
+            name='Conv_1')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3,
+            momentum=0.999, name='Conv_1/BatchNorm')(x)
+        x = activation(x)
+        x = tf.keras.layers.Conv2D(
+            last_point_ch,
+            kernel_size=1,
+            padding='same',
+            use_bias=True,
+            name='Conv_2')(x)
+        x = activation(x)
+        if weights == 'imagenet':
+            model = tf.keras.Model(inputs, x, name='MobilenetV3' + model_type)
+            model_name = '{{}}{{}}_224_{{}}_float'.format(
+                model_type, '_minimalistic' if minimalistic else '', str(alpha))
+            weights_hashes = {{
+                'large_224_0.75_float': ('765b44a33ad4005b3ac83185abf1d0eb',
+                                         'e7b4d1071996dd51a2c2ca2424570e20'),
+                'large_224_1.0_float': ('59e551e166be033d707958cf9e29a6a7',
+                                        '037116398e07f018c0005ffcb0406831'),
+                'large_minimalistic_224_1.0_float': ('675e7b876c45c57e9e63e6d90a36599c',
+                                                     'a2c33aed672524d1d0b4431808177695'),
+                'small_224_0.75_float': ('cb65d4e5be93758266aa0a7f2c6708b7',
+                                         '4d2fe46f1c1f38057392514b0df1d673'),
+                'small_224_1.0_float': ('8768d4c2e7dee89b9d02b2d03d65d862',
+                                        'be7100780f875c06bcab93d76641aa26'),
+                'small_minimalistic_224_1.0_float': ('99cd97fb2fcdad2bf028eb838de69e37',
+                                                     '20d4e357df3f7a6361f3a288857b1051'),
+            }}
+            file_name = 'weights_mobilenet_v3_' + model_name + '_no_top.h5'
+            file_hash = weights_hashes[model_name][1]
+            weights_path = tf.python.keras.utils.data_utils.get_file(
+                file_name,
+                ('https://storage.googleapis.com/tensorflow/'
+                 'keras-applications/mobilenet_v3/') + file_name,
+                cache_subdir='models',
+                file_hash=file_hash)
+            model.load_weights(weights_path)
+            return model
+        else:
+            return x
+
+    # MobileNetV3Large
+    @staticmethod
+    def MobileNetV3Large(inputs, last_point_ch=1280, alpha=1.0,
+                         minimalistic=False, model_type='large', weights=None, **kwargs):
+        def hard_sigmoid(x):
+            return tf.keras.layers.ReLU(6.)(x + 3.) * (1. / 6.)
+
+        def relu(x):
+            return tf.keras.layers.ReLU()(x)
+
+        def stack_fn(x, kernel, activation, se_ratio):
+            def depth(d):
+                return Model_Structure.mobilenet_v3_depth(d * alpha)
+
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 1, depth(16), 3, 1, None, relu, 0)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 4, depth(24), 3, 2, None, relu, 1)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(24), 3, 1, None, relu, 2)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(40), kernel, 2, se_ratio, relu, 3)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(40), kernel, 1, se_ratio, relu, 4)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 3, depth(40), kernel, 1, se_ratio, relu, 5)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(80), 3, 2, None, activation, 6)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 2.5, depth(80), 3, 1, None, activation, 7)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 2.3, depth(80), 3, 1, None, activation, 8)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 2.3, depth(80), 3, 1, None, activation, 9)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(112), 3, 1, se_ratio, activation, 10)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(112), 3, 1, se_ratio, activation, 11)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(160), kernel, 2, se_ratio, activation,
+                                                                12)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(160), kernel, 1, se_ratio, activation,
+                                                                13)
+            x = Model_Structure.mobilenet_v3_inverted_res_block(x, 6, depth(160), kernel, 1, se_ratio, activation,
+                                                                14)
+            return x
+
+        channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
+
+        if minimalistic:
+            kernel = 3
+            activation = relu
+            se_ratio = None
+        else:
+            kernel = 5
+            activation = hard_sigmoid
+            se_ratio = 0.25
+
+        x = inputs
+        x = tf.python.keras.layers.VersionAwareLayers().Rescaling(1. / 255.)(x)
+        x = tf.keras.layers.Conv2D(
+            16,
+            kernel_size=3,
+            strides=(2, 2),
+            padding='same',
+            use_bias=False,
+            name='Conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3,
+            momentum=0.999, name='Conv/BatchNorm')(x)
+        x = activation(x)
+
+        x = stack_fn(x, kernel, activation, se_ratio)
+
+        last_conv_ch = Model_Structure.mobilenet_v3_depth(tf.keras.backend.int_shape(x)[channel_axis] * 6)
+
+        # if the width multiplier is greater than 1 we
+        # increase the number of output channels
+        if alpha > 1.0:
+            last_point_ch = Model_Structure.mobilenet_v3_depth(last_point_ch * alpha)
+        x = tf.keras.layers.Conv2D(
+            last_conv_ch,
+            kernel_size=1,
+            padding='same',
+            use_bias=False,
+            name='Conv_1')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=channel_axis, epsilon=1e-3,
+            momentum=0.999, name='Conv_1/BatchNorm')(x)
+        x = activation(x)
+        x = tf.keras.layers.Conv2D(
+            last_point_ch,
+            kernel_size=1,
+            padding='same',
+            use_bias=True,
+            name='Conv_2')(x)
+        x = activation(x)
+
+        model = tf.keras.models.Model(inputs, x, name='MobilenetV3' + model_type)
+
+        # Load weights.
+        if weights == 'imagenet':
+            model_name = '{{}}{{}}_224_{{}}_float'.format(
+                model_type, '_minimalistic' if minimalistic else '', str(alpha))
+
+            weights_hashes = {{
+                'large_224_0.75_float': ('765b44a33ad4005b3ac83185abf1d0eb',
+                                         'e7b4d1071996dd51a2c2ca2424570e20'),
+                'large_224_1.0_float': ('59e551e166be033d707958cf9e29a6a7',
+                                        '037116398e07f018c0005ffcb0406831'),
+                'large_minimalistic_224_1.0_float': ('675e7b876c45c57e9e63e6d90a36599c',
+                                                     'a2c33aed672524d1d0b4431808177695'),
+                'small_224_0.75_float': ('cb65d4e5be93758266aa0a7f2c6708b7',
+                                         '4d2fe46f1c1f38057392514b0df1d673'),
+                'small_224_1.0_float': ('8768d4c2e7dee89b9d02b2d03d65d862',
+                                        'be7100780f875c06bcab93d76641aa26'),
+                'small_minimalistic_224_1.0_float': ('99cd97fb2fcdad2bf028eb838de69e37',
+                                                     '20d4e357df3f7a6361f3a288857b1051'),
+            }}
+            file_name = 'weights_mobilenet_v3_' + model_name + '_no_top.h5'
+            file_hash = weights_hashes[model_name][1]
+            weights_path = tf.python.keras.utils.data_utils.get_file(
+                file_name,
+                ('https://storage.googleapis.com/tensorflow/'
+                 'keras-applications/mobilenet_v3/') + file_name,
+                cache_subdir='models',
+                file_hash=file_hash)
+            model.load_weights(weights_path)
+            return model
+        else:
+            return x
+
+    # MnasNet
+    @staticmethod
+    def MnasNet(inputs, alpha=1, **kwargs):
+        x = Model_Structure.mnasnet_conv_bn(inputs, 32 * alpha, 3, strides=2)
+        x = Model_Structure.mnasnet_depthwiseConv_bn(x, 16 * alpha, 3, strides=1)
+        # MBConv3 3x3
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=24, kernel_size=3, strides=2, filters_multiplier=3,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=24, kernel_size=3, strides=1, filters_multiplier=3,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=24, kernel_size=3, strides=1, filters_multiplier=3,
+                                                  alpha=alpha)
+        # MBConv3 5x5
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=40, kernel_size=5, strides=2, filters_multiplier=3,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=40, kernel_size=5, strides=1, filters_multiplier=3,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=40, kernel_size=5, strides=1, filters_multiplier=3,
+                                                  alpha=alpha)
+        # MBConv6 5x5
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=80, kernel_size=5, strides=2, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=80, kernel_size=5, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=80, kernel_size=5, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        # MBConv6 3x3
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=96, kernel_size=3, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=96, kernel_size=3, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        # MBConv6 5x5
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=192, kernel_size=5, strides=2, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=192, kernel_size=5, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        # MBConv6 3x3
+        x = Model_Structure.mnasnet_mbconv_idskip(x, filters=320, kernel_size=3, strides=1, filters_multiplier=6,
+                                                  alpha=alpha)
+        # FC + POOL
+        x = Model_Structure.mnasnet_conv_bn(x, filters=1152 * alpha, kernel_size=1, strides=1)
+        return x
+
+    # SqueezeNet
+    @staticmethod
+    def SqueezeNet(inputs, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=96,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = Model_Structure.squeezenet_firemodule(x, s1=16, e1=64, e3=64)
+        x = Model_Structure.squeezenet_firemodule(x, s1=16, e1=64, e3=64)
+        x = Model_Structure.squeezenet_firemodule(x, s1=32, e1=128, e3=128)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = Model_Structure.squeezenet_firemodule(x, s1=32, e1=128, e3=128)
+        x = Model_Structure.squeezenet_firemodule(x, s1=48, e1=192, e3=192)
+        x = Model_Structure.squeezenet_firemodule(x, s1=48, e1=192, e3=192)
+        x = Model_Structure.squeezenet_firemodule(x, s1=64, e1=256, e3=256)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = Model_Structure.squeezenet_firemodule(x, s1=64, e1=256, e3=256)
+        x = tf.keras.layers.Dropout(rate=0.5)(x)
+        x = tf.keras.layers.Conv2D(filters=Settings.settings(),
+                                   kernel_size=(1, 1),
+                                   strides=1,
+                                   padding="same")(x)
+        return x
+
+    # ShuffleNetV2
+    @staticmethod
+    def ShuffleNetV2(inputs, channel_scale, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=24, kernel_size=(3, 3), strides=2, padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = tf.nn.swish(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=2, padding="same")(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=4, in_channels=24, out_channels=channel_scale[0])
+        x = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=8, in_channels=channel_scale[0],
+                                                     out_channels=channel_scale[1])
+        x = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=4, in_channels=channel_scale[1],
+                                                     out_channels=channel_scale[2])
+        x = tf.keras.layers.Conv2D(filters=channel_scale[3], kernel_size=(1, 1), strides=1, padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        return x
+
+    # SEResNet
+    @staticmethod
+    def SEResNet(inputs, block, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=64,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding='same')(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = tf.keras.layers.Activation(tf.keras.activations.swish)(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2)(x)
+        x = Model_Structure.seresnet_make_res_block(x, filter_num=64,
+                                                    blocks=block[0])
+        x = Model_Structure.seresnet_make_res_block(x, filter_num=128,
+                                                    blocks=block[1],
+                                                    stride=2)
+        x = Model_Structure.seresnet_make_res_block(x, filter_num=256,
+                                                    blocks=block[2],
+                                                    stride=2)
+        x = Model_Structure.seresnet_make_res_block(x, filter_num=512,
+                                                    blocks=block[3],
+                                                    stride=2)
+        return x
+
+    # ResNeXt
+    @staticmethod
+    def ResNeXt(inputs, block, cardinality=32, training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=64,
+                                   kernel_size=(7, 7),
+                                   strides=2,
+                                   padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training=training)
+        x = tf.nn.relu(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
+                                      strides=2,
+                                      padding="same")(x)
+        x = Model_Structure.resnext_build_ResNeXt_block(x, filters=128,
+                                                        strides=1,
+                                                        groups=cardinality,
+                                                        repeat_num=block[0])
+        x = Model_Structure.resnext_build_ResNeXt_block(x, filters=256,
+                                                        strides=2,
+                                                        groups=cardinality,
+                                                        repeat_num=block[1])
+        x = Model_Structure.resnext_build_ResNeXt_block(x, filters=512,
+                                                        strides=2,
+                                                        groups=cardinality,
+                                                        repeat_num=block[2])
+        x = Model_Structure.resnext_build_ResNeXt_block(x, filters=1024,
+                                                        strides=2,
+                                                        groups=cardinality,
+                                                        repeat_num=block[3])
+        return x
+
+    # RegNet
+    @staticmethod
+    def RegNet(inputs, active='relu', dropout_rate=0.2, fc_activation=None, stem_set=48, stage_depth=[2, 6, 17, 2],
+               stage_width=[48, 120, 336, 888], stage_G=24, SEstyle_atten="SE", using_cb=False, **kwargs):
+        x = Model_Structure.regnet_make_stem(inputs, filters=stem_set, size=(3, 3), strides=2, active=active)
+        for i in range(len(stage_depth)):
+            depth = stage_depth[i]
+            width = stage_width[i]
+            group_G = stage_G
+            x = Model_Structure.regnet_make_stage(x, n_block=depth,
+                                                  block_width=width,
+                                                  group_G=group_G)
+
+        if dropout_rate > 0:
+            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
+        if fc_activation:
+            x = tf.keras.layers.Activation(fc_activation)(x)
+        return x
+
+    # ResNest
+    @staticmethod
+    def ResNest(inputs, dropout_rate=0.2, fc_activation=None, blocks_set=[3, 4, 6, 3], radix=2, groups=1,
+                bottleneck_width=64, deep_stem=True, stem_width=32, block_expansion=4, avg_down=True, avd=True,
+                avd_first=False, preact=False, using_basic_block=False, using_cb=False, using_transformer=True,
+                hidden_dim=512, nheads=8, num_encoder_layers=6, num_decoder_layers=6, n_query_pos=100, **kwargs):
+        x = Model_Structure.resnest_make_stem(inputs, stem_width=stem_width, deep_stem=deep_stem)
+
+        if preact is False:
+            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+        x = tf.keras.layers.MaxPool2D(pool_size=3, strides=2, padding="same", data_format="channels_last")(x)
+
+        if preact is True:
+            x = tf.keras.layers.BatchNormalization(axis=-1, epsilon=1.001e-5)(x)
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+
+        if using_cb:
+            second_x = x
+            second_x = Model_Structure.resnest_make_layer(x, blocks=blocks_set[0], filters=64, stride=1, is_first=False,
+                                                          using_basic_block=using_basic_block, avd=avd, radix=radix,
+                                                          avd_first=avd_first)
+            second_x_tmp = Model_Structure.resnest_make_composite_layer(second_x, filters=x.shape[-1], upsample=False)
+
+            x = tf.keras.layers.Add()([second_x_tmp, x])
+        x = Model_Structure.resnest_make_layer(x, blocks=blocks_set[0], filters=64, stride=1, is_first=False,
+                                               using_basic_block=using_basic_block, avd=avd, radix=radix,
+                                               avd_first=avd_first)
+
+        b1_b3_filters = [64, 128, 256, 512]
+        for i in range(3):
+            idx = i + 1
+            if using_cb:
+                second_x = Model_Structure.resnest_make_layer(x, blocks=blocks_set[idx], filters=b1_b3_filters[idx],
+                                                              stride=2,
+                                                              using_basic_block=using_basic_block, avd=avd, radix=radix,
+                                                              avd_first=avd_first)
+                second_x_tmp = Model_Structure.resnest_make_composite_layer(second_x, filters=x.shape[-1])
+
+                x = tf.keras.layers.Add()([second_x_tmp, x])
+            x = Model_Structure.resnest_make_layer(x, blocks=blocks_set[idx], filters=b1_b3_filters[idx], stride=2,
+                                                   is_first=False,
+                                                   using_basic_block=using_basic_block, avd=avd, radix=radix,
+                                                   avd_first=avd_first)
+
+        if using_transformer:
+            x = Model_Structure.resnest_make_transformer_top(x, hidden_dim=hidden_dim, n_query_pos=n_query_pos,
+                                                             nheads=nheads,
+                                                             num_encoder_layers=num_encoder_layers,
+                                                             num_decoder_layers=num_decoder_layers)
+
+        else:
+            x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)
+
+        if dropout_rate > 0:
+            x = tf.keras.layers.Dropout(dropout_rate, noise_shape=None)(x)
+
+        if fc_activation:
+            x = tf.keras.layers.Activation('Mish_Activation')(x)
+        if using_transformer:
+            x = tf.expand_dims(x, axis=1)
+
+        return x
+
+    # GhostNet
+    @staticmethod
+    def GhostNet(inputs, **kwargs):
+        x = tf.keras.layers.Conv2D(16, (3, 3), strides=(2, 2), padding='same', activation=None, use_bias=False)(inputs)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=16, out=16, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=48, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=72, out=24, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=72, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=120, out=40, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=2, exp=240, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=200, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=184, out=80, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=480, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=3, strides=1, exp=672, out=112, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=2, exp=672, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=False)(x)
+        x = GBNeck(dwkernel=5, strides=1, exp=960, out=160, ratio=2, use_se=True)(x)
+        x = tf.keras.layers.Conv2D(960, (1, 1), strides=(1, 1), padding='same', data_format='channels_last',
+                                   activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = tf.keras.layers.Conv2D(1280, (1, 1), strides=(1, 1), padding='same', activation=None, use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        return x
+
+    # SE_DenseNet
+    @staticmethod
+    def SE_DenseNet(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+
+        x = Model_Structure.sedensenet_dense_block(x, block[0], name='conv2')
+        x = Model_Structure.sedensenet_transition_block(x, 0.5, name='pool2')
+        x = Model_Structure.sedensenet_dense_block(x, block[1], name='conv3')
+        x = Model_Structure.sedensenet_transition_block(x, 0.5, name='pool3')
+        x = Model_Structure.sedensenet_dense_block(x, block[2], name='conv4')
+        x = Model_Structure.sedensenet_transition_block(x, 0.5, name='pool4')
+        x = Model_Structure.sedensenet_dense_block(x, block[3], name='conv5')
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
+        return x
 
 
 class Models(object):
@@ -9259,9 +8550,7 @@ class Models(object):
     @staticmethod
     def captcha_model():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-                              compression_rate=0.5,
-                              drop_rate=0.5)
+        x = Get_Model.GhostNet(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -9276,15 +8565,13 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        # x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-        #                               compression_rate=0.5,
-        #                               drop_rate=0.5)
-        x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
+        # x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
+        x = Get_Model.SE_DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
+        # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
@@ -9294,8 +8581,10 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        # x = CnnHead.cnn_head(inputs)
-        x = Mobilenet.MobileNetV3Small(inputs)
+        x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
+        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
+                                   kernel_initializer=tf.keras.initializers.he_normal(),
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
         x = tf.keras.layers.Reshape((-1, 512))(x)
         x = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(units=256, return_sequences=True, use_bias=True, recurrent_activation='sigmoid'))(
@@ -9305,6 +8594,8 @@ class Models(object):
             x)
         outputs = tf.keras.layers.Dense(units=Settings.settings())(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
+
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=CTCLoss(), metrics=[WordAccuracy()])
@@ -9315,8 +8606,7 @@ class Models(object):
                          compression_rate=0.5,
                          drop_rate=0.5, mask=None, training=False):
         inputs = tf.keras.layers.Input(shape=inputs_shape, name='inputs')
-        x = Densenet.Densenet(inputs, num_init_features, growth_rate, block_layers, compression_rate,
-                              drop_rate)
+        x = Get_Model.GhostNet(inputs)
         x = tf.keras.layers.Reshape((x.shape[1] * x.shape[2], x.shape[3]), name='reshape_len')(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
@@ -9391,118 +8681,91 @@ class Models(object):
 
 ## big(适合使用GPU训练)
 # InceptionResNetV2
-# x = Inception.InceptionResNetV2(inputs)
+# x = Get_Model.InceptionResNetV2(inputs)
 
 # Densenet_121
-# x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 24, 16],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
+# x = Get_Model.DenseNet(inputs, block=[6, 12, 24, 16])
 # Densenet_169
-# x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
+# x = Get_Model.DenseNet(inputs, block=[6, 12, 32, 32])
 # Densenet_201
-# x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 48, 32],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
+# x = Get_Model.DenseNet(inputs, block=[6, 12, 48, 32])
 # Densenet_264
-# x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 64, 48],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
+# x = Get_Model.DenseNet(inputs, block=[6, 12, 64, 48])
 
 # Efficient_net_b0
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2)
 # Efficient_net_b1
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.1, dropout_rate=0.2)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.0, depth_coefficient=1.1, dropout_rate=0.2)
 # Efficient_net_b2
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.1, depth_coefficient=1.2, dropout_rate=0.3)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.1, depth_coefficient=1.2, dropout_rate=0.3)
 # Efficient_net_b3
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.2, depth_coefficient=1.4, dropout_rate=0.3)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.2, depth_coefficient=1.4, dropout_rate=0.3)
 # Efficient_net_b4
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.4, depth_coefficient=1.8, dropout_rate=0.4)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.4, depth_coefficient=1.8, dropout_rate=0.4)
 # Efficient_net_b5
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.6, depth_coefficient=2.2, dropout_rate=0.4)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.6, depth_coefficient=2.2, dropout_rate=0.4)
 # Efficient_net_b6
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.8, depth_coefficient=2.6, dropout_rate=0.5)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.8, depth_coefficient=2.6, dropout_rate=0.5)
 # Efficient_net_b7
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=2.0, depth_coefficient=3.1, dropout_rate=0.5)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=2.0, depth_coefficient=3.1, dropout_rate=0.5)
 
 # ResNest
-# x = ResNest.resnest(inputs)
+# x = Get_Model.ResNest(inputs)
 
 # RegNet
-# x = RegNet.regnet(inputs, active='Mish_Activation')
+# x = Get_Model.RegNet(inputs, active='Mish_Activation')
 
 # Resnet_18
-# x = ResNeXt.ResNetTypeI(inputs, layer_params=(2, 2, 2, 2))
+# x = Get_Model.ResNet(inputs, block=[2, 2, 2, 2])
 # Resnet_34
-# x = ResNeXt.ResNetTypeI(inputs, layer_params=(3, 4, 6, 3))
+# x = Get_Model.ResNet(inputs, block=[3, 4, 6, 3])
 # Resnet_50
-# x = ResNeXt.ResNetTypeII(inputs, layer_params=(3, 4, 6, 3))
+# x = Get_Model.ResNet(inputs, block=[3, 4, 6, 3])
 # Resnet_101
-# x = ResNeXt.ResNetTypeII(inputs, layer_params=(3, 4, 23, 3))
+# x = Get_Model.ResNet(inputs, block=[3, 4, 23, 3])
 # Resnet_152
-# x = ResNeXt.ResNetTypeII(inputs, layer_params=(3, 8, 36, 3))
+# x = Get_Model.ResNet(inputs, block=[3, 8, 36, 3])
+
 # ResNeXt50
-# x = ResNeXt.Resnext(inputs, repeat_num_list=(3, 4, 6, 3), cardinality=32)
+# x = Get_Model.ResNeXt(inputs, block=[3, 4, 6, 3])
 # ResNeXt101
-# x = ResNeXt.Resnext(inputs, repeat_num_list=(3, 4, 23, 3), cardinality=32)
+# x = Get_Model.ResNeXt(inputs, block=[3, 4, 23, 3])
 
 # SEResNet50
-# x = SEResNet.SEResNet(inputs, block_num=[3, 4, 6, 3])
+# x = Get_Model.SEResNet(inputs, block=[3, 4, 6, 3])
 # SEResNet152
-# x = SEResNet.SEResNet(inputs, block_num=[3, 8, 36, 3])
+# x = Get_Model.SEResNet(inputs, block=[3, 8, 36, 3])
 
-# DIY
-# x = Lambda_Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-#                                  compression_rate=0.5,
-#                                  drop_rate=0.5)
-# x = CBAM_ResNet.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
-# x = ResNext_squeeze.Resnext(inputs, repeat_num_list=(3, 4, 6, 3))
-# x = RES32_DETR.res32_detr(inputs)
-# x = Densenet_squeeze.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-#                               compression_rate=0.5,
-#                               drop_rate=0.5)
-# x = RegNet_Diy.regnet(inputs)
 
 ## small(适合使用CPU训练)
-# MobileNetV1
-# x = Mobilenet.MobileNetV1(inputs)
+
 # MobileNetV2
-# x = Mobilenet.MobileNetV2(inputs)
+# x = Get_Model.MobileNetV2(inputs)
 # MobileNetV3Large
-# x = Mobilenet.MobileNetV3Large(inputs)
+# x = Get_Model.MobileNetV3Large(inputs)
 # MobileNetV3Small
-# x = Mobilenet.MobileNetV3Small(inputs)
+# x = Get_Model.MobileNetV3Small(inputs)
 
 # ShuffleNet_0_5x
-# x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[48, 96, 192, 1024])
+# x = Get_Model.ShuffleNetV2(inputs, channel_scale=[48, 96, 192, 1024])
 # ShuffleNet_1_0x
-# x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[116, 232, 464, 1024])
+# x = Get_Model.ShuffleNetV2(inputs, channel_scale=[116, 232, 464, 1024])
 # ShuffleNet_1_5x
-# x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[176, 352, 704, 1024])
+# x = Get_Model.ShuffleNetV2(inputs, channel_scale=[176, 352, 704, 1024])
 # ShuffleNet_2_0x
-# x = ShuffleNetV2.ShuffleNetV2(inputs, channel_scale=[244, 488, 976, 2048])
+# x = Get_Model.ShuffleNetV2(inputs, channel_scale=[244, 488, 976, 2048])
 
 # Efficient_net_b0
-# x = Efficientnet.Efficientnet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2, lite=False)
+# x = Get_Model.EfficientNet(inputs, width_coefficient=1.0, depth_coefficient=1.0, dropout_rate=0.2, lite=False)
 
 # SqueezeNet
-# x = SqueezeNet.SqueezeNet(inputs)
+# x = Get_Model.SqueezeNet(inputs)
 
 # MnasNet
-# x = MnasNet.MnasNet(inputs)
+# x = Get_Model.MnasNet(inputs)
 
 # GhostNet
-# x = GhostNet.ghostnet(inputs)
-
-# DIY
-# x = MobileNetv3_small_squeeze.MobileNetv3_small(inputs)
-# x = Mobilenet_tpu.MobileNetV3Small(inputs)
-# x = Mobilenet_se.MobileNetV3Small(inputs)
-
-## object_detection(目标检测)
-# x = Mobilenet_det.MobileNetV3Small(inputs)
+# x = Get_Model.GhostNet(inputs)
 
 
 ## tf.keras(加载imagenet权重，冻结部分层的权重可以加速训练并获得不错的效果)
@@ -9531,7 +8794,8 @@ class Models(object):
 # x = tf.keras.applications.Xception(include_top=False, weights='imagenet')(inputs)
 # x = tf.keras.applications.InceptionResNetV2(include_top=False, weights='imagenet')(inputs)
 # x = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')(inputs)
-
+# x = Get_Model.MobileNetV3Small(inputs, weights='imagenet')(inputs)
+# x = Get_Model.MobileNetV3Large(inputs, weights='imagenet')(inputs)
 
 ## 冻结部分层的权重代码(模型编译前冻结即可)
 # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
@@ -10230,4 +9494,4 @@ class New_Work(object):
 
 
 if __name__ == '__main__':
-    New_Work(work_path='works', project_name='simple').main()
+    New_Work(work_path='works', project_name='simples').main()
