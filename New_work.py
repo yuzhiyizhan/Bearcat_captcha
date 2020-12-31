@@ -12,16 +12,16 @@ from tensorflow.keras import backend as K
 from {work_path}.{project_name}.settings import LR
 from {work_path}.{project_name}.settings import MODE
 from {work_path}.{project_name}.settings import EPOCHS
-from {work_path}.{project_name}.settings import log_dir
-from {work_path}.{project_name}.settings import csv_path
+from {work_path}.{project_name}.settings import LOG_DIR
+from {work_path}.{project_name}.settings import CSV_PATH
 from {work_path}.{project_name}.settings import BATCH_SIZE
-from {work_path}.{project_name}.settings import train_path
+from {work_path}.{project_name}.settings import TRAIN_PATH
 from {work_path}.{project_name}.settings import UPDATE_FREQ
 from {work_path}.{project_name}.settings import LR_PATIENCE
 from {work_path}.{project_name}.settings import EARLY_PATIENCE
-from {work_path}.{project_name}.settings import checkpoint_path
+from {work_path}.{project_name}.settings import CHECKPOINT_PATH
 from {work_path}.{project_name}.settings import COSINE_SCHEDULER
-from {work_path}.{project_name}.settings import checkpoint_file_path
+from {work_path}.{project_name}.settings import CHECKPOINT_FILE_PATH
 from {work_path}.{project_name}.utils import Image_Processing
 
 # 开启可视化的命令
@@ -35,8 +35,8 @@ tensorboard --logdir "logs"
 class CallBack(object):
     @classmethod
     def calculate_the_best_weight(self):
-        if os.listdir(checkpoint_path):
-            value = Image_Processing.extraction_image(checkpoint_path)
+        if os.listdir(CHECKPOINT_PATH):
+            value = Image_Processing.extraction_image(CHECKPOINT_PATH)
             extract_num = [os.path.splitext(os.path.split(i)[-1])[0] for i in value]
             num = [re.split('-', i) for i in extract_num]
             losses = [float('-' + str(abs(float(i[2])))) for i in num]
@@ -47,7 +47,7 @@ class CallBack(object):
 
     @classmethod
     def cosine_scheduler(self):
-        train_number = len(Image_Processing.extraction_image(train_path))
+        train_number = len(Image_Processing.extraction_image(TRAIN_PATH))
         warmup_epoch = int(EPOCHS * 0.2)
         total_steps = int(EPOCHS * train_number / BATCH_SIZE)
         warmup_steps = int(warmup_epoch * train_number / BATCH_SIZE)
@@ -61,24 +61,24 @@ class CallBack(object):
     @classmethod
     def callback(self, model):
         call = []
-        if os.path.exists(checkpoint_path):
-            if os.listdir(checkpoint_path):
+        if os.path.exists(CHECKPOINT_PATH):
+            if os.listdir(CHECKPOINT_PATH):
                 logger.debug('load the model')
-                model.load_weights(os.path.join(checkpoint_path, self.calculate_the_best_weight()))
-                logger.debug(f'读取的权重为{{os.path.join(checkpoint_path, self.calculate_the_best_weight())}}')
+                model.load_weights(os.path.join(CHECKPOINT_PATH, self.calculate_the_best_weight()))
+                logger.debug(f'读取的权重为{{os.path.join(CHECKPOINT_PATH, self.calculate_the_best_weight())}}')
         if MODE == 'YOLO' or MODE == 'YOLO_TINY' or MODE == 'EFFICIENTDET':
-            cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file_path,
+            cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=CHECKPOINT_FILE_PATH,
                                                              verbose=1,
                                                              monitor='loss',
                                                              save_weights_only=True,
                                                              save_best_only=False, period=1)
         else:
-            cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file_path,
+            cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=CHECKPOINT_FILE_PATH,
                                                              verbose=1,
                                                              save_weights_only=True,
                                                              save_best_only=False, period=1)
         call.append(cp_callback)
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, write_images=False,
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=LOG_DIR, histogram_freq=1, write_images=False,
                                                               update_freq=UPDATE_FREQ, write_graph=False)
         call.append(tensorboard_callback)
         if COSINE_SCHEDULER:
@@ -90,7 +90,7 @@ class CallBack(object):
                 lr_callback = tf.keras.callbacks.ReduceLROnPlateau(factor=0.1, patience=LR_PATIENCE)
         call.append(lr_callback)
 
-        csv_callback = tf.keras.callbacks.CSVLogger(filename=csv_path, append=True)
+        csv_callback = tf.keras.callbacks.CSVLogger(filename=CSV_PATH, append=True)
         call.append(csv_callback)
         if MODE == 'YOLO' or MODE == 'YOLO_TINY' or MODE == 'EFFICIENTDET':
             early_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, verbose=1,
@@ -195,7 +195,6 @@ class WarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
 if __name__ == '__main__':
     logger.debug(CallBack.calculate_the_best_weight())
 
-
 """
 
 
@@ -207,7 +206,7 @@ import gradio as gr
 import tensorflow as tf
 from loguru import logger
 from {work_path}.{project_name}.settings import USE_GPU
-from {work_path}.{project_name}.settings import App_model_path
+from {work_path}.{project_name}.settings import APP_MODEL_PATH
 from {work_path}.{project_name}.utils import Predict_Image
 
 if USE_GPU:
@@ -235,11 +234,11 @@ else:
     tf.config.experimental.list_physical_devices(device_type="CPU")
     os.environ["CUDA_VISIBLE_DEVICE"] = "-1"
 
-if App_model_path:
-    model_path = os.path.join(App_model_path, os.listdir(App_model_path)[0])
+if APP_MODEL_PATH:
+    model_path = os.path.join(APP_MODEL_PATH, os.listdir(APP_MODEL_PATH)[0])
     logger.debug(f'{{model_path}}模型读取成功')
 else:
-    raise OSError(f'{{App_model_path}}没有存放模型文件')
+    raise OSError(f'{{APP_MODEL_PATH}}没有存放模型文件')
 
 Predict = Predict_Image(model_path=model_path, app=True)
 
@@ -276,39 +275,44 @@ def captcha_config():
 
 
 def check_file(work_path, project_name):
-    return f"""import numpy as np
+    return f"""import os
+import numpy as np
 from PIL import Image
 from loguru import logger
 from {work_path}.{project_name}.settings import MODE
-from {work_path}.{project_name}.settings import train_path
-from {work_path}.{project_name}.settings import validation_path
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import label_path
-from {work_path}.{project_name}.settings import train_enhance_path
-from {work_path}.{project_name}.settings import DATA_ENHANCEMENT
+from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PATH
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import LABEL_PATH
 from {work_path}.{project_name}.utils import Image_Processing
 from concurrent.futures import ThreadPoolExecutor
 
-if DATA_ENHANCEMENT:
-    train_image = Image_Processing.extraction_image(train_enhance_path)
-else:
-    train_image = Image_Processing.extraction_image(train_path)
+train_image = Image_Processing.extraction_image(TRAIN_PATH)
 
 
-def cheak_image(image):
-    with open(image, 'rb') as image_file:
+def cheak_image(image_path):
+    with open(image_path, 'rb') as image_file:
         image = Image.open(image_file)
-        if image.mode != 'RGB':
-            logger.error(f'{{image}}模式为{{image.mode}}')
-            return False
-        width, height = image.size
-        width_list.append(width)
-        height_list.append(height)
+        # if image.mode != 'RGB':
+        #     logger.error(f'{{image}}模式为{{image.mode}}')
+        try:
+            image.verify()
+            width, height = image.size
+            width_list.append(width)
+            height_list.append(height)
+        except SyntaxError as e:
+            logger.error(e)
+            try:
+                logger.error(f'图片: {{image_path}} 已损坏')
+                # os.remove(image_path)
+                # logger.debug(f'已删除{{image_path}}')
+            except Exception as e:
+                logger.error(e)
 
 
-validation_image = Image_Processing.extraction_image(validation_path)
+validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
 
-test_image = Image_Processing.extraction_image(test_path)
+test_image = Image_Processing.extraction_image(TEST_PATH)
 
 width_list = []
 height_list = []
@@ -316,11 +320,13 @@ height_list = []
 image_list = train_image + validation_image + test_image
 
 if MODE == 'YOLO' or MODE == 'YOLO_TINY' or MODE == 'EFFICIENTDET':
-    logger.debug(f'标签总数{{len(Image_Processing.extraction_image(label_path))}}')
+    logger.debug(f'标签总数{{len(Image_Processing.extraction_image(LABEL_PATH))}}')
 
 with ThreadPoolExecutor(max_workers=20) as t:
     for i in image_list:
         task = t.submit(cheak_image, i)
+
+
 
 logger.debug(f'图片总数{{len(image_list)}}')
 logger.info(f'所有图片最大的高为{{np.max(height_list)}}')
@@ -333,15 +339,14 @@ def delete_file(work_path, project_name):
     return f"""# 增强后文件太多，手动删非常困难，直接用代码删
 import shutil
 from loguru import logger
-from {work_path}.{project_name}.settings import weight
-from {work_path}.{project_name}.settings import train_path
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import label_path
-from {work_path}.{project_name}.settings import validation_path
-from {work_path}.{project_name}.settings import train_enhance_path
-from {work_path}.{project_name}.settings import train_pack_path
-from {work_path}.{project_name}.settings import validation_pack_path
-from {work_path}.{project_name}.settings import test_pack_path
+from {work_path}.{project_name}.settings import WEIGHT
+from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import LABEL_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PATH
+from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
+from {work_path}.{project_name}.settings import TEST_PACK_PATH
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -354,12 +359,11 @@ def del_file(path):
 
 
 if __name__ == '__main__':
-    path = [train_path, test_path, validation_path, train_enhance_path, train_pack_path, validation_pack_path,
-            test_pack_path, label_path,weight]
+    path = [TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH, TEST_PACK_PATH, LABEL_PATH,
+            WEIGHT]
     with ThreadPoolExecutor(max_workers=50) as t:
         for i in path:
             t.submit(del_file, i)
-
 
 """
 
@@ -402,18 +406,19 @@ from {work_path}.{project_name}.settings import MODEL
 from {work_path}.{project_name}.settings import DIVIDE
 from {work_path}.{project_name}.settings import PRUNING
 from {work_path}.{project_name}.settings import MAX_BOXES
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import label_path
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import LABEL_PATH
+from {work_path}.{project_name}.settings import BASIC_PATH
 from {work_path}.{project_name}.settings import IMAGE_WIDTH
 from {work_path}.{project_name}.settings import IMAGE_SIZES
 from {work_path}.{project_name}.settings import DIVIDE_RATO
 from {work_path}.{project_name}.settings import IMAGE_HEIGHT
-from {work_path}.{project_name}.settings import n_class_file
+from {work_path}.{project_name}.settings import NUMBER_CLASSES_FILE
 from {work_path}.{project_name}.settings import CAPTCHA_LENGTH
 from {work_path}.{project_name}.settings import IMAGE_CHANNALS
-from {work_path}.{project_name}.settings import validation_path
+from {work_path}.{project_name}.settings import VALIDATION_PATH
 from {work_path}.{project_name}.settings import DATA_ENHANCEMENT
-from {work_path}.{project_name}.settings import train_enhance_path
+from {work_path}.{project_name}.settings import TRAIN_PATH
 from concurrent.futures import ThreadPoolExecutor
 
 right_value = 0
@@ -454,10 +459,10 @@ class Image_Processing(object):
                     ocr_path.append(s)
             n_class = sorted(set(ocr_path))
             save_dict = dict((index, name) for index, name in enumerate(n_class))
-            if not os.path.exists(os.path.join(os.getcwd(), n_class_file)):
-                with open(n_class_file, 'w', encoding='utf-8') as f:
+            if not os.path.exists(os.path.join(BASIC_PATH, NUMBER_CLASSES_FILE)):
+                with open(NUMBER_CLASSES_FILE, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(save_dict, ensure_ascii=False))
-            with open(n_class_file, 'r', encoding='utf-8') as f:
+            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
                 make_dict = json.loads(f.read())
             make_dict = dict((name, index) for index, name in make_dict.items())
             label_list = [self.text2vector(label, make_dict=make_dict) for label in paths]
@@ -470,10 +475,10 @@ class Image_Processing(object):
                 paths = [os.path.splitext(os.path.split(i)[-1])[0] for i in path_list]
             n_class = sorted(set(paths))
             save_dict = dict((index, name) for index, name in enumerate(n_class))
-            if not os.path.exists(os.path.join(os.getcwd(), n_class_file)):
-                with open(n_class_file, 'w', encoding='utf-8') as f:
+            if not os.path.exists(os.path.join(BASIC_PATH, NUMBER_CLASSES_FILE)):
+                with open(NUMBER_CLASSES_FILE, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(save_dict, ensure_ascii=False))
-            with open(n_class_file, 'r', encoding='utf-8') as f:
+            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
                 make_dict = json.loads(f.read())
             make_dict = dict((name, index) for index, name in make_dict.items())
             label_list = [self.text2vector(label, make_dict=make_dict, mode=MODE) for label in paths]
@@ -490,10 +495,10 @@ class Image_Processing(object):
                     ocr_path.append(s)
             n_class = sorted(set(ocr_path))
             save_dict = dict((index, name) for index, name in enumerate(n_class))
-            if not os.path.exists(os.path.join(os.getcwd(), n_class_file)):
-                with open(n_class_file, 'w', encoding='utf-8') as f:
+            if not os.path.exists(os.path.join(BASIC_PATH, NUMBER_CLASSES_FILE)):
+                with open(NUMBER_CLASSES_FILE, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(save_dict, ensure_ascii=False))
-            with open(n_class_file, 'r', encoding='utf-8') as f:
+            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
                 make_dict = json.loads(f.read())
             make_dict = dict((name, index) for index, name in make_dict.items())
             label_list = [self.text2vector(label, make_dict=make_dict) for label in paths]
@@ -502,9 +507,9 @@ class Image_Processing(object):
             n_class = []
             paths = [os.path.splitext(os.path.split(i)[-1])[0] for i in path_list]
             try:
-                label = [(i, glob.glob(f'{{label_path}}/*/{{i}}.xml')[0]) for i in paths]
+                label = [(i, glob.glob(f'{{LABEL_PATH}}/*/{{i}}.xml')[0]) for i in paths]
             except:
-                label = [(i, glob.glob(f'{{label_path}}/{{i}}.xml')[0]) for i in paths]
+                label = [(i, glob.glob(f'{{LABEL_PATH}}/{{i}}.xml')[0]) for i in paths]
             path = [(i, os.path.splitext(os.path.split(i)[-1])[0]) for i in path_list]
             for index, label_xml in label:
                 file = open(label_xml, encoding='utf-8')
@@ -514,10 +519,10 @@ class Image_Processing(object):
                 file.close()
             n_class = sorted(set(n_class))
             save_dict = dict((index, name) for index, name in enumerate(n_class))
-            if not os.path.exists(os.path.join(os.getcwd(), n_class_file)):
-                with open(n_class_file, 'w', encoding='utf-8') as f:
+            if not os.path.exists(os.path.join(BASIC_PATH, NUMBER_CLASSES_FILE)):
+                with open(NUMBER_CLASSES_FILE, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(save_dict, ensure_ascii=False))
-            with open(n_class_file, 'r', encoding='utf-8') as f:
+            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
                 make_dict = json.loads(f.read())
             make_dict = dict((name, index) for index, name in make_dict.items())
             label_dict = {{}}
@@ -550,10 +555,10 @@ class Image_Processing(object):
                     ocr_path.append(s)
             n_class = sorted(set(ocr_path))
             save_dict = dict((index, name) for index, name in enumerate(n_class))
-            if not os.path.exists(os.path.join(os.getcwd(), n_class_file)):
-                with open(n_class_file, 'w', encoding='utf-8') as f:
+            if not os.path.exists(os.path.join(BASIC_PATH, NUMBER_CLASSES_FILE)):
+                with open(NUMBER_CLASSES_FILE, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(save_dict, ensure_ascii=False))
-            with open(n_class_file, 'r', encoding='utf-8') as f:
+            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
                 make_dict = json.loads(f.read())
             make_dict = dict((name, index) for index, name in make_dict.items())
             label_list = [self.text2vector(label, make_dict=make_dict) for label in paths]
@@ -620,7 +625,7 @@ class Image_Processing(object):
                     number = number + 1
                     logger.debug(f'准备移动{{(number / len(validation_dataset)) * 100}}%')
                     t.submit(path.remove, i)
-            validation = [os.path.join(validation_path, os.path.split(i)[-1]) for i in validation_dataset]
+            validation = [os.path.join(VALIDATION_PATH, os.path.split(i)[-1]) for i in validation_dataset]
             validation_lenght = len(validation)
             with ThreadPoolExecutor(max_workers=50) as t:
                 for full_path, des_path in zip(validation_dataset, validation):
@@ -628,7 +633,7 @@ class Image_Processing(object):
                     t.submit(Image_Processing._shutil_move, full_path, des_path, validation_lenght)
 
             test_dataset = random.sample(path, division_number)
-            test = [os.path.join(test_path, os.path.split(i)[-1]) for i in test_dataset]
+            test = [os.path.join(TEST_PATH, os.path.split(i)[-1]) for i in test_dataset]
             test_lenght = len(test)
             with ThreadPoolExecutor(max_workers=50) as t:
                 for full_path, des_path in zip(test_dataset, test):
@@ -641,7 +646,7 @@ class Image_Processing(object):
             division_number = int(len(path) * proportion)
             logger.debug(f'测试集数量为{{division_number}}')
             test_dataset = random.sample(path, division_number)
-            test = [os.path.join(test_path, os.path.split(i)[-1]) for i in test_dataset]
+            test = [os.path.join(TEST_PATH, os.path.split(i)[-1]) for i in test_dataset]
             test_lenght = len(test)
             with ThreadPoolExecutor(max_workers=50) as t:
                 for full_path, des_path in zip(test_dataset, test):
@@ -722,12 +727,12 @@ class Image_Processing(object):
                                                                   data_format=None,
                                                                   validation_split=0.0,
                                                                   dtype=None)
-        shutil.copy(image, train_enhance_path)
+
         img = tf.keras.preprocessing.image.load_img(image)
         x = tf.keras.preprocessing.image.img_to_array(img)
         x = np.expand_dims(x, 0)
         i = 0
-        for _ in datagen.flow(x, batch_size=1, save_to_dir=train_enhance_path, save_prefix=name, save_format='jpg'):
+        for _ in datagen.flow(x, batch_size=1, save_to_dir=TRAIN_PATH, save_prefix=name, save_format='jpg'):
             i += 1
             if i == DATA_ENHANCEMENT:
                 break
@@ -1427,7 +1432,7 @@ class WriteTFRecord(object):
 # 映射函数
 def parse_function(exam_proto, mode=MODE):
     if mode == 'ORDINARY':
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             make_dict = json.loads(f.read())
         features = {{
             'image': tf.io.FixedLenFeature([], tf.string),
@@ -1440,7 +1445,7 @@ def parse_function(exam_proto, mode=MODE):
         label_tensor = parsed_example['label']
         return (img_tensor, label_tensor)
     elif mode == 'NUM_CLASSES':
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             make_dict = json.loads(f.read())
         features = {{
             'image': tf.io.FixedLenFeature([], tf.string),
@@ -1506,7 +1511,7 @@ class YOLO_Predict_Image(object):
         return new_image
 
     def load_model(self):
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             self.class_names = list(json.loads(f.read()).values())
         # self.class_names = ['person', 'bicycle', 'car', 'motorbike', 'aeroplane', 'bus', 'train', 'truck', 'boat',
         #                     'traffic light',
@@ -1884,7 +1889,7 @@ class Efficientdet_Predict_Image(object):
         return Efficientdet_anchors.get_anchors(self.image_sizes[self.phi])
 
     def load_model(self):
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             self.class_names = list(json.loads(f.read()).values())
         # 计算总的种类
         self.num_classes = len(self.class_names)
@@ -2053,7 +2058,7 @@ class Predict_Image(object):
             self.model = operator.methodcaller(MODEL)(Models)
             self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
         logger.debug('加载模型到内存')
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             result = f.read()
         self.num_classes_dict = json.loads(result)
         self.num_classes_list = list(json.loads(result).values())
@@ -2664,7 +2669,6 @@ def running_time(time):
     else:
         return str('%.2f' % time) + 's'
 
-
 """
 
 
@@ -2736,31 +2740,32 @@ def init_working_space(work_path, project_name):
 import os
 import shutil
 from loguru import logger
-from {work_path}.{project_name}.settings import weight
-from {work_path}.{project_name}.settings import train_path
-from {work_path}.{project_name}.settings import validation_pack_path
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import train_enhance_path
-from {work_path}.{project_name}.settings import train_pack_path
-from {work_path}.{project_name}.settings import model_path
-from {work_path}.{project_name}.settings import validation_path
-from {work_path}.{project_name}.settings import label_path
-from {work_path}.{project_name}.settings import App_model_path
-from {work_path}.{project_name}.settings import checkpoint_path
+from {work_path}.{project_name}.settings import WEIGHT
+from {work_path}.{project_name}.settings import BASIC_PATH
+from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
+from {work_path}.{project_name}.settings import MODEL_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PATH
+from {work_path}.{project_name}.settings import LABEL_PATH
+from {work_path}.{project_name}.settings import APP_MODEL_PATH
+from {work_path}.{project_name}.settings import CHECKPOINT_PATH
 
 
 def chrak_path():
-    paths = [test_path, train_path, validation_path, train_enhance_path, train_pack_path,
-             validation_pack_path, model_path, os.path.join(os.getcwd(), 'logs'), os.path.join(os.getcwd(), 'CSVLogger'), checkpoint_path, weight,
-             label_path, App_model_path]
+    paths = [TEST_PATH, TRAIN_PATH, VALIDATION_PATH, TRAIN_PACK_PATH,
+             VALIDATION_PACK_PATH, MODEL_PATH, os.path.join(BASIC_PATH, 'logs'),
+             os.path.join(BASIC_PATH, 'CSVLogger'), CHECKPOINT_PATH, WEIGHT,
+             LABEL_PATH, APP_MODEL_PATH]
     for i in paths:
         if not os.path.exists(i):
             os.mkdir(i)
 
 
 def del_file():
-    path = [os.path.join(os.getcwd(), 'CSVLogger'),
-            os.path.join(os.getcwd(), 'logs'), checkpoint_path]
+    path = [os.path.join(BASIC_PATH, 'CSVLogger'),
+            os.path.join(BASIC_PATH, 'logs'), CHECKPOINT_PATH]
     for i in path:
         try:
             shutil.rmtree(i)
@@ -2796,13 +2801,13 @@ from einops.layers.tensorflow import Rearrange
 from {work_path}.{project_name}.settings import LR
 from {work_path}.{project_name}.settings import PHI
 from {work_path}.{project_name}.settings import MODE
-from {work_path}.{project_name}.settings import weight
+from {work_path}.{project_name}.settings import WEIGHT
 from {work_path}.{project_name}.settings import MAX_BOXES
-from {work_path}.{project_name}.settings import label_path
+from {work_path}.{project_name}.settings import LABEL_PATH
 from {work_path}.{project_name}.settings import IMAGE_WIDTH
 from {work_path}.{project_name}.settings import IMAGE_SIZES
-from {work_path}.{project_name}.settings import anchors_path
-from {work_path}.{project_name}.settings import n_class_file
+from {work_path}.{project_name}.settings import ANCHORS_PATH
+from {work_path}.{project_name}.settings import NUMBER_CLASSES_FILE
 from {work_path}.{project_name}.settings import IMAGE_HEIGHT
 from {work_path}.{project_name}.settings import CAPTCHA_LENGTH
 from {work_path}.{project_name}.settings import IMAGE_CHANNALS
@@ -3997,7 +4002,7 @@ class Yolo_Loss(object):
 class YOLO_anchors(object):
     @staticmethod
     def get_anchors():
-        if not os.path.exists(anchors_path):
+        if not os.path.exists(ANCHORS_PATH):
             SIZE = IMAGE_HEIGHT
             if MODE == 'YOLO':
                 anchors_num = 9
@@ -4016,11 +4021,11 @@ class YOLO_anchors(object):
                 x_y = [int(data[i][0]), int(data[i][1])]
                 anchors.append(x_y)
             save_dict = {{'anchors': anchors}}
-            with open(anchors_path, 'w', encoding='utf-8') as f:
+            with open(ANCHORS_PATH, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(save_dict, ensure_ascii=False))
             return np.array(anchors, dtype=np.float).reshape(-1, 2)
         else:
-            with open(anchors_path, 'r', encoding='utf-8') as f:
+            with open(ANCHORS_PATH, 'r', encoding='utf-8') as f:
                 anchors = json.loads(f.read()).get('anchors')
             return np.array(anchors, dtype=np.float).reshape(-1, 2)
 
@@ -4029,9 +4034,9 @@ class YOLO_anchors(object):
         data = []
         # 对于每一个xml都寻找box
         try:
-            label_list = glob.glob(f'{{label_path}}\*\*.xml')
+            label_list = glob.glob(f'{{LABEL_PATH}}\*\*.xml')
         except:
-            label_list = glob.glob(f'{{label_path}}\*.xml')
+            label_list = glob.glob(f'{{LABEL_PATH}}\*.xml')
         for xml_file in label_list:
             tree = ET.parse(xml_file)
             height = int(tree.findtext('./size/height'))
@@ -4832,13 +4837,13 @@ class WordAccuracy(tf.keras.metrics.Metric):
 class Settings(object):
     @staticmethod
     def settings():
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             n_class = len(json.loads(f.read()))
         return n_class + 1
 
     @staticmethod
     def settings_num_classes():
-        with open(n_class_file, 'r', encoding='utf-8') as f:
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             n_class = len(json.loads(f.read()))
         return n_class
 
@@ -7062,6 +7067,146 @@ class Model_Structure(object):
         x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
         return x
 
+    @staticmethod
+    def hierarchical_split(x, channel):
+        channel_begin = x.get_shape().as_list()[-1]
+        ##第一阶段
+        layer1 = tf.keras.layers.Conv2D(channel, 1, strides=1, padding='same')(x)
+        layer1 = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer1)
+        layer1 = tf.nn.relu(layer1)
+        layer1_0, layer1_1, layer1_2, layer1_3, layer1_4 = tf.split(layer1, 5, -1)
+        ##第二阶段
+        channel1 = layer1_1.get_shape().as_list()[-1] * 2
+        # layer1_1 = tf.nn.relu(
+        #     tf.keras.layers.BatchNormalization(tf.keras.layers.Conv2D(layer1_1, channel1, 3, strides=1, padding='same'),
+        #                                        axis=-1,
+        #                                        momentum=0.99, epsilon=0.001, center=True, scale=True, ))
+        layer1_1 = tf.keras.layers.Conv2D(channel1, 1, strides=1, padding='same')(layer1_1)
+        layer1_1 = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer1_1)
+        layer1_1 = tf.nn.relu(layer1_1)
+        layer1_1_0, layer1_1_1 = tf.split(layer1_1, 2, -1)
+        ##第三阶段
+        channel2 = layer1_2.get_shape().as_list()[-1] * 2
+
+        layer1_2 = tf.concat([layer1_2, layer1_1_1], -1)
+        # layer1_2 = tf.nn.relu(
+        #     tf.keras.layers.BatchNormalization(tf.keras.layers.Conv2D(layer1_2, channel2, 3, strides=1, padding='same'),
+        #                                        axis=-1,
+        #                                        momentum=0.99, epsilon=0.001, center=True, scale=True, ))
+        layer1_2 = tf.keras.layers.Conv2D(channel2, 1, strides=1, padding='same')(layer1_2)
+        layer1_2 = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer1_2)
+        layer1_2 = tf.nn.relu(layer1_2)
+        layer1_2_0, layer1_2_1 = tf.split(layer1_2, 2, -1)
+        ##第四阶段
+        channel3 = layer1_3.get_shape().as_list()[-1] * 2
+        layer1_3 = tf.concat([layer1_3, layer1_2_1], -1)
+        # layer1_3 = tf.nn.relu(
+        #     tf.keras.layers.BatchNormalization(tf.keras.layers.Conv2D(layer1_3, channel3, 3, strides=1, padding='same'),
+        #                                        axis=-1,
+        #                                        momentum=0.99, epsilon=0.001, center=True, scale=True, ))
+        layer1_3 = tf.keras.layers.Conv2D(channel3, 1, strides=1, padding='same')(layer1_3)
+        layer1_3 = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer1_3)
+        layer1_3 = tf.nn.relu(layer1_3)
+        layer1_3_0, layer1_3_1 = tf.split(layer1_3, 2, -1)
+        ##第五阶段
+        channel4 = layer1_4.get_shape().as_list()[-1] * 2
+        layer1_4 = tf.concat([layer1_4, layer1_3_1], -1)
+        # layer1_4 = tf.nn.relu(
+        #     tf.keras.layers.BatchNormalization(tf.keras.layers.Conv2D(layer1_4, channel4, 3, strides=1, padding='same'),
+        #                                        axis=-1,
+        #                                        momentum=0.99, epsilon=0.001, center=True, scale=True, ))
+        layer1_4 = tf.keras.layers.Conv2D(channel4, 1, strides=1, padding='same')(layer1_4)
+        layer1_4 = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer1_4)
+        layer1_4 = tf.nn.relu(layer1_4)
+        ##第六阶段
+        layer_all = tf.concat([layer1_0, layer1_1_0, layer1_2_0, layer1_3_0, layer1_4], -1)
+        # layer_all = tf.nn.relu(
+        #     tf.keras.layers.BatchNormalization(
+        #         tf.keras.layers.Conv2D(layer_all, channel_begin, 1, strides=1, padding='same'),
+        #         axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True, ))
+        layer_all = tf.keras.layers.Conv2D(channel_begin, 1, strides=1, padding='same')(layer_all)
+        layer_all = tf.keras.layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True)(
+            layer_all)
+        layer_all = tf.nn.relu(layer_all)
+        return x + layer_all
+
+    @staticmethod
+    def hs_resnetv2_block(x, filters, kernel_size=3, stride=1, conv_shortcut=False, name=None):
+
+        bn_axis = 3 if tf.python.keras.backend.image_data_format() == 'channels_last' else 1
+
+        preact = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_preact_bn')(x)
+        preact = tf.keras.layers.Activation('Mish_Activation', name=name + '_preact_relu')(preact)
+
+        if conv_shortcut:
+            shortcut = Model_Structure.hierarchical_split(preact, 4 * filters)
+        else:
+            shortcut = Model_Structure.hierarchical_split(preact, 4 * filters)
+        x = Model_Structure.hierarchical_split(preact, filters)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name=name + '_1_relu')(x)
+
+        x = Model_Structure.hierarchical_split(x, filters)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_2_bn')(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name=name + '_2_relu')(x)
+        x = Model_Structure.hierarchical_split(x, 4 * filters)
+        x = tf.keras.layers.Add(name=name + '_out')([shortcut, x])
+        return x
+
+    @staticmethod
+    def hs_resnetv2_stack(x, filters, blocks, stride1=2, name=None):
+
+        x = Model_Structure.hs_resnetv2_block(x, filters, conv_shortcut=True, name=name + '_block1')
+        for i in range(2, blocks):
+            x = Model_Structure.hs_resnetv2_block(x, filters, name=name + '_block' + str(i))
+        x = Model_Structure.hs_resnetv2_block(x, filters, stride=stride1, name=name + '_block' + str(blocks))
+        return x
+
+    @staticmethod
+    def densenet_dense_block_d(x, blocks, name):
+        for i in range(blocks):
+            x = Model_Structure.densenet_conv_block_d(x, 32, name=name + '_block' + str(i + 1))
+        return x
+
+    @staticmethod
+    def densenet_transition_block_d(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = FRN()(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1,
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        x = tf.keras.layers.AveragePooling2D(2, strides=2, name=name + '_pool')(x)
+        return x
+
+    @staticmethod
+    def densenet_conv_block_d(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x1 = FRN()(x)
+        x1 = tf.keras.layers.Activation('Mish_Activation', name=name + '_0_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, use_bias=False, name=name + '_1_conv')(
+            x1)
+        x1 = FRN()(x1)
+        x1 = tf.keras.layers.Activation('Mish_Activation', name=name + '_1_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x1)
+        x1 = Model_Structure.regnet_squeeze_excite_block(x1)
+        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
+
 
 class Get_Model(object):
     # DenseNet
@@ -7088,6 +7233,32 @@ class Get_Model(object):
 
         x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
         x = tf.keras.layers.Activation('relu', name='relu')(x)
+        return x
+
+    # DIY
+    @staticmethod
+    def DenseNet_D(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+
+        x = Model_Structure.densenet_dense_block_d(x, block[0], name='conv2')
+        x = Model_Structure.densenet_transition_block_d(x, 0.5, name='pool2')
+        x = Model_Structure.densenet_dense_block_d(x, block[1], name='conv3')
+        x = Model_Structure.densenet_transition_block_d(x, 0.5, name='pool3')
+        x = Model_Structure.densenet_dense_block_d(x, block[2], name='conv4')
+        x = Model_Structure.densenet_transition_block_d(x, 0.5, name='pool4')
+        x = Model_Structure.densenet_dense_block_d(x, block[3], name='conv5')
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
         return x
 
     # EfficientNet
@@ -7283,6 +7454,31 @@ class Get_Model(object):
             x = Model_Structure.resnet_stack2(x, 128, block[1], name='conv3')
             x = Model_Structure.resnet_stack2(x, 256, block[2], name='conv4')
             return Model_Structure.resnet_stack2(x, 512, block[3], stride1=1, name='conv5')
+
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=((3, 3), (3, 3)), name='conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=use_bias, name='conv1_conv')(x)
+
+        if not preact:
+            x = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name='conv1_bn')(x)
+            x = tf.keras.layers.Activation('relu', name='conv1_relu')(x)
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad')(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1_pool')(x)
+
+        x = stack_fn(x)
+        return x
+
+    @staticmethod
+    def ResNetV3(inputs, block, use_bias=True, preact=True, **kwargs):
+        def stack_fn(x):
+            x = Model_Structure.resnet_stack3(x, 64, block[0], name='conv2')
+            x = Model_Structure.resnet_stack3(x, 128, block[1], name='conv3')
+            x = Model_Structure.resnet_stack3(x, 256, block[2], name='conv4')
+            return Model_Structure.resnet_stack3(x, 512, block[3], stride1=1, name='conv5')
 
         bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
 
@@ -8433,6 +8629,32 @@ class Get_Model(object):
         x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
         return x
 
+    # HS_ResNet_V2
+    @staticmethod
+    def HS_ResNetV2(inputs, block, use_bias=True, preact=True, **kwargs):
+        def stack_fn(x):
+            x = Model_Structure.hs_resnetv2_stack(x, 60, block[0], name='conv2')
+            x = Model_Structure.hs_resnetv2_stack(x, 120, block[1], name='conv3')
+            x = Model_Structure.hs_resnetv2_stack(x, 250, block[2], name='conv4')
+            return Model_Structure.hs_resnetv2_stack(x, 500, block[3], stride1=1, name='conv5')
+
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(
+            padding=((3, 3), (3, 3)), name='conv1_pad')(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=use_bias, name='conv1_conv')(x)
+
+        if not preact:
+            x = tf.keras.layers.BatchNormalization(
+                axis=bn_axis, epsilon=1.001e-5, name='conv1_bn')(x)
+            x = tf.keras.layers.Activation('relu', name='conv1_relu')(x)
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad')(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1_pool')(x)
+
+        x = stack_fn(x)
+        return x
+
 
 class Models(object):
     @staticmethod
@@ -8440,7 +8662,7 @@ class Models(object):
         anchors = YOLO_anchors.get_anchors()
         model_body = Yolo_tiny_model.yolo_body(tf.keras.layers.Input(shape=(None, None, 3)), len(anchors) // 2,
                                                Settings.settings_num_classes())
-        weights_path = os.path.join(weight, 'yolov4_tiny_weights_voc.h5')
+        weights_path = os.path.join(WEIGHT, 'yolov4_tiny_weights_voc.h5')
         if os.path.exists(weights_path):
             model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
             for i in range(int(len(list(model_body.layers)) * 0.9)): model_body.layers[i].trainable = False
@@ -8470,7 +8692,7 @@ class Models(object):
         model_body = Yolo_model.yolo_body(tf.keras.layers.Input(shape=(None, None, 3)), len(anchors) // 3,
                                           Settings.settings_num_classes())
 
-        weights_path = os.path.join(weight, 'yolo4_weight.h5')
+        weights_path = os.path.join(WEIGHT, 'yolo4_weight.h5')
         if os.path.exists(weights_path):
             model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
             for i in range(int(len(list(model_body.layers)) * 0.9)): model_body.layers[i].trainable = False
@@ -8536,7 +8758,7 @@ class Models(object):
 
         model = tf.keras.models.Model(inputs=[inputs], outputs=[regression, classification], name='efficientdet')
 
-        weights_path = os.path.join(weight, 'efficientdet-d0-voc.h5')
+        weights_path = os.path.join(WEIGHT, 'efficientdet-d0-voc.h5')
         if os.path.exists(weights_path):
             model.load_weights(weights_path, by_name=True, skip_mismatch=True)
             for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
@@ -8550,7 +8772,7 @@ class Models(object):
     @staticmethod
     def captcha_model():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.GhostNet(inputs)
+        x = Get_Model.DenseNet_D(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -8565,13 +8787,11 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        # x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
-        x = Get_Model.SE_DenseNet(inputs, block=[6, 12, 32, 32])
+        x = tf.keras.applications.DenseNet169(include_top=False, weights=None)(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
@@ -8581,7 +8801,7 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
+        x = tf.keras.applications.MobileNetV2(include_top=False, weights=None)(inputs)
         x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
                                    kernel_initializer=tf.keras.initializers.he_normal(),
                                    kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
@@ -8594,8 +8814,6 @@ class Models(object):
             x)
         outputs = tf.keras.layers.Dense(units=Settings.settings())(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
-
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=CTCLoss(), metrics=[WordAccuracy()])
@@ -8717,8 +8935,6 @@ class Models(object):
 
 # Resnet_18
 # x = Get_Model.ResNet(inputs, block=[2, 2, 2, 2])
-# Resnet_34
-# x = Get_Model.ResNet(inputs, block=[3, 4, 6, 3])
 # Resnet_50
 # x = Get_Model.ResNet(inputs, block=[3, 4, 6, 3])
 # Resnet_101
@@ -8803,7 +9019,7 @@ class Models(object):
 
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
-        model = Models.captcha_model_num_classes()
+        model = Models.captcha_model()
         model.summary()
         for i, n in enumerate(model.layers):
             logger.debug(f'{{i}} {{n.name}}')
@@ -8815,45 +9031,40 @@ if __name__ == '__main__':
 
 def split_dataset(work_path, project_name):
     return f"""import random
-from {work_path}.{project_name}.settings import train_path
+from {work_path}.{project_name}.settings import TRAIN_PATH
 from {work_path}.{project_name}.utils import Image_Processing
 
-train_image = Image_Processing.extraction_image(train_path)
+train_image = Image_Processing.extraction_image(TRAIN_PATH)
 random.shuffle(train_image)
 Image_Processing.split_dataset(train_image)
-
 """
 
 
 def pack_dataset(work_path, project_name):
     return f"""import random
 from loguru import logger
-from {work_path}.{project_name}.settings import train_path
-from {work_path}.{project_name}.settings import validation_path
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import train_enhance_path
+from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PATH
+from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import DATA_ENHANCEMENT
-from {work_path}.{project_name}.settings import TFRecord_train_path
-from {work_path}.{project_name}.settings import TFRecord_validation_path
+from {work_path}.{project_name}.settings import TFRECORD_TRAIN_PATH
+from {work_path}.{project_name}.settings import TFRECORD_VALIDATION_PATH
 from {work_path}.{project_name}.utils import Image_Processing
 from {work_path}.{project_name}.utils import WriteTFRecord
 from concurrent.futures import ThreadPoolExecutor
 
 if DATA_ENHANCEMENT:
-    image_path = Image_Processing.extraction_image(train_path)
+    image_path = Image_Processing.extraction_image(TRAIN_PATH)
     number = len(image_path)
     with ThreadPoolExecutor(max_workers=100) as t:
         for i in image_path:
             number = number - 1
             task = t.submit(Image_Processing.preprosess_save_images, i, number)
-    train_image = Image_Processing.extraction_image(train_enhance_path)
-    random.shuffle(train_image)
 
-else:
-    train_image = Image_Processing.extraction_image(train_path)
-    random.shuffle(train_image)
-validation_image = Image_Processing.extraction_image(validation_path)
-test_image = Image_Processing.extraction_image(test_path)
+train_image = Image_Processing.extraction_image(TRAIN_PATH)
+random.shuffle(train_image)
+validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+test_image = Image_Processing.extraction_image(TEST_PATH)
 
 Image_Processing.extraction_label(train_image + validation_image + test_image)
 
@@ -8864,8 +9075,8 @@ test_lable = Image_Processing.extraction_label(test_image)
 # logger.debug(train_lable)
 #
 with ThreadPoolExecutor(max_workers=3) as t:
-    t.submit(WriteTFRecord.WriteTFRecord, TFRecord_train_path, train_image, train_lable, 'train', 10000)
-    t.submit(WriteTFRecord.WriteTFRecord, TFRecord_validation_path, validation_image, validation_lable, 'validation',
+    t.submit(WriteTFRecord.WriteTFRecord, TFRECORD_TRAIN_PATH, train_image, train_lable, 'train', 10000)
+    t.submit(WriteTFRecord.WriteTFRecord, TFRECORD_VALIDATION_PATH, validation_image, validation_lable, 'validation',
              10000)
 
 """
@@ -8881,18 +9092,18 @@ from {work_path}.{project_name}.callback import CallBack
 from {work_path}.{project_name}.settings import MODEL
 from {work_path}.{project_name}.settings import PRUNING
 from {work_path}.{project_name}.settings import MODEL_NAME
-from {work_path}.{project_name}.settings import model_path
-from {work_path}.{project_name}.settings import checkpoint_path
+from {work_path}.{project_name}.settings import MODEL_PATH
+from {work_path}.{project_name}.settings import CHECKPOINT_PATH
 from {work_path}.{project_name}.settings import PRUNING_MODEL_NAME
 
 model = operator.methodcaller(MODEL)(Models)
 try:
     weight = CallBack.calculate_the_best_weight()
     logger.info(f'读取的权重为{{weight}}')
-    model.load_weights(os.path.join(checkpoint_path, weight))
+    model.load_weights(os.path.join(CHECKPOINT_PATH, weight))
 except:
-    raise OSError(f'没有任何的权重和模型在{{model_path}}')
-weight_path = os.path.join(model_path, MODEL_NAME)
+    raise OSError(f'没有任何的权重和模型在{{MODEL_PATH}}')
+weight_path = os.path.join(MODEL_PATH, MODEL_NAME)
 model.save(weight_path)
 logger.success(f'{{weight_path}}模型保存成功')
 
@@ -8901,7 +9112,7 @@ if PRUNING:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     quantized_and_pruned_tflite_model = converter.convert()
-    quantized_and_pruned_tflite_file = os.path.join(model_path, PRUNING_MODEL_NAME)
+    quantized_and_pruned_tflite_file = os.path.join(MODEL_PATH, PRUNING_MODEL_NAME)
     with open(quantized_and_pruned_tflite_file, 'wb') as f:
         f.write(quantized_and_pruned_tflite_model)
     logger.success(f'{{quantized_and_pruned_tflite_file}}模型保存成功')
@@ -8919,7 +9130,7 @@ USE_GPU = True
 
 # 模式选择 ORDINARY默认模式，需要设置验证码的长度 | NUM_CLASSES图片分类 | CTC识别文字，不需要文本设置长度 | CTC_TINY识别文字，需要设置长度
 # | EFFICIENTDET目标检测 YOLO目标检测 YOLO_TINY目标检测
-MODE = 'EFFICIENTDET'
+MODE = 'ORDINARY'
 
 ## 超参数设置(通用设置)
 # 学习率
@@ -8945,10 +9156,10 @@ EARLY_PATIENCE = 16
 
 ## 图片设置请先运行check_file.py查看图片的宽和高，设置的高和宽最好大于等于你的数据集的高和宽
 # 图片高度
-IMAGE_HEIGHT = 416
+IMAGE_HEIGHT = 120
 
 # 图片宽度
-IMAGE_WIDTH = 416
+IMAGE_WIDTH = 120
 
 # 图片通道
 IMAGE_CHANNALS = 3
@@ -9011,70 +9222,70 @@ PRUNING_MODEL_NAME = 'captcha.tflite'
 # 可视化配置batch或epoch
 UPDATE_FREQ = 'epoch'
 
-# 训练集路径
-train_path = os.path.join(os.getcwd(), 'train_dataset')
+# 项目工作路径
+BASIC_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# 增强后的路径
-train_enhance_path = os.path.join(os.getcwd(), 'train_enhance_dataset')
+# 训练集路径
+TRAIN_PATH = os.path.join(BASIC_PATH, 'train_dataset')
 
 # 验证集路径
-validation_path = os.path.join(os.getcwd(), 'validation_dataset')
+VALIDATION_PATH = os.path.join(BASIC_PATH, 'validation_dataset')
 
 # 测试集路径
-test_path = os.path.join(os.getcwd(), 'test_dataset')
+TEST_PATH = os.path.join(BASIC_PATH, 'test_dataset')
 
 # 标签路径
-label_path = os.path.join(os.getcwd(), 'label')
+LABEL_PATH = os.path.join(BASIC_PATH, 'label')
 
 # 打包训练集路径
-TFRecord_train_path = os.path.join(os.getcwd(), 'train_pack_dataset')
+TFRECORD_TRAIN_PATH = os.path.join(BASIC_PATH, 'train_pack_dataset')
 
 # 打包验证集
-TFRecord_validation_path = os.path.join(os.getcwd(), 'validation_pack_dataset')
+TFRECORD_VALIDATION_PATH = os.path.join(BASIC_PATH, 'validation_pack_dataset')
 
 # 模型保存路径
-model_path = os.path.join(os.getcwd(), 'model')
+MODEL_PATH = os.path.join(BASIC_PATH, 'model')
 
 # 可视化日志路径
-log_dir = os.path.join(os.path.join(os.getcwd(), 'logs'), f'{{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}}')
+LOG_DIR = os.path.join(os.path.join(BASIC_PATH, 'logs'), f'{{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}}')
 
 # csv_logger日志路径
-csv_path = os.path.join(os.path.join(os.getcwd(), 'CSVLogger'), 'traing.csv')
+CSV_PATH = os.path.join(os.path.join(BASIC_PATH, 'CSVLogger'), 'traing.csv')
 
 # 断点续训路径
-checkpoint_path = os.path.join(os.getcwd(), 'checkpoint')  # 检查点路径
+CHECKPOINT_PATH = os.path.join(BASIC_PATH, 'checkpoint')  # 检查点路径
 
 if MODE == 'CTC':
-    checkpoint_file_path = os.path.join(checkpoint_path,
+    CHECKPOINT_FILE_PATH = os.path.join(CHECKPOINT_PATH,
                                         'Model_weights.-{{epoch:02d}}-{{val_loss:.4f}}-{{val_word_acc:.4f}}.hdf5')
 elif MODE == 'YOLO' or MODE == 'CTC_TINY' or MODE == 'YOLO_TINY':
-    checkpoint_file_path = os.path.join(checkpoint_path, 'Model_weights.-{{epoch:02d}}-{{loss:.4f}}.hdf5')
+    CHECKPOINT_FILE_PATH = os.path.join(CHECKPOINT_PATH, 'Model_weights.-{{epoch:02d}}-{{loss:.4f}}.hdf5')
 elif MODE == 'EFFICIENTDET':
-    checkpoint_file_path = os.path.join(checkpoint_path,
+    CHECKPOINT_FILE_PATH = os.path.join(CHECKPOINT_PATH,
                                         'Model_weights.-{{epoch:02d}}-{{loss:.4f}}-{{regression_loss:.4f}}-{{classification_loss:.4f}}.hdf5')
 else:
-    checkpoint_file_path = os.path.join(checkpoint_path,
+    CHECKPOINT_FILE_PATH = os.path.join(CHECKPOINT_PATH,
                                         'Model_weights.-{{epoch:02d}}-{{val_loss:.4f}}-{{val_acc:.4f}}.hdf5')
 # TF训练集(打包后)
-train_pack_path = os.path.join(os.getcwd(), 'train_pack_dataset')
+TRAIN_PACK_PATH = os.path.join(BASIC_PATH, 'train_pack_dataset')
 
 # TF验证集(打包后)
-validation_pack_path = os.path.join(os.getcwd(), 'validation_pack_dataset')
+VALIDATION_PACK_PATH = os.path.join(BASIC_PATH, 'validation_pack_dataset')
 
 # TF测试集(打包后)
-test_pack_path = os.path.join(os.getcwd(), 'test_pack_dataset')
+TEST_PACK_PATH = os.path.join(BASIC_PATH, 'test_pack_dataset')
 
 # 提供后端放置的模型路径
-App_model_path = os.path.join(os.getcwd(), 'App_model')
+APP_MODEL_PATH = os.path.join(BASIC_PATH, 'App_model')
 
 # 映射表
-n_class_file = os.path.join(os.getcwd(), 'num_classes.json')
+NUMBER_CLASSES_FILE = os.path.join(BASIC_PATH, 'num_classes.json')
 
 # 权重
-weight = os.path.join(os.getcwd(), 'weight')
+WEIGHT = os.path.join(BASIC_PATH, 'weight')
 
 # 先验框
-anchors_path = os.path.join(os.getcwd(), 'anchors.json')
+ANCHORS_PATH = os.path.join(BASIC_PATH, 'anchors.json')
 
 """
 
@@ -9127,8 +9338,8 @@ import tensorflow as tf
 from loguru import logger
 from {work_path}.{project_name}.settings import USE_GPU
 from {work_path}.{project_name}.settings import PRUNING
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import model_path
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import MODEL_PATH
 from {work_path}.{project_name}.settings import MODEL_NAME
 from {work_path}.{project_name}.settings import PRUNING_MODEL_NAME
 from {work_path}.{project_name}.utils import running_time
@@ -9166,13 +9377,13 @@ else:
     tf.config.experimental.list_physical_devices(device_type="CPU")
     os.environ["CUDA_VISIBLE_DEVICE"] = "-1"
 
-test_image_list = Image_Processing.extraction_image(test_path)
+test_image_list = Image_Processing.extraction_image(TEST_PATH)
 number = len(test_image_list)
 random.shuffle(test_image_list)
 if PRUNING:
-    model_path = os.path.join(model_path, PRUNING_MODEL_NAME)
+    model_path = os.path.join(MODEL_PATH, PRUNING_MODEL_NAME)
 else:
-    model_path = os.path.join(model_path, MODEL_NAME)
+    model_path = os.path.join(MODEL_PATH, MODEL_NAME)
 
 logger.debug(f'加载模型{{model_path}}')
 if not os.path.exists(model_path):
@@ -9218,19 +9429,17 @@ from {work_path}.{project_name}.settings import MOSAIC
 from {work_path}.{project_name}.settings import EPOCHS
 from {work_path}.{project_name}.settings import USE_GPU
 from {work_path}.{project_name}.settings import BATCH_SIZE
-from {work_path}.{project_name}.settings import model_path
+from {work_path}.{project_name}.settings import MODEL_PATH
 from {work_path}.{project_name}.settings import MODEL_NAME
 from {work_path}.{project_name}.settings import IMAGE_SIZES
 from {work_path}.{project_name}.settings import IMAGE_HEIGHT
 from {work_path}.{project_name}.settings import IMAGE_WIDTH
-from {work_path}.{project_name}.settings import DATA_ENHANCEMENT
-from {work_path}.{project_name}.settings import csv_path
-from {work_path}.{project_name}.settings import train_path
-from {work_path}.{project_name}.settings import validation_path
-from {work_path}.{project_name}.settings import test_path
-from {work_path}.{project_name}.settings import train_pack_path
-from {work_path}.{project_name}.settings import train_enhance_path
-from {work_path}.{project_name}.settings import validation_pack_path
+from {work_path}.{project_name}.settings import CSV_PATH
+from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PATH
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
+from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
 
 if USE_GPU:
     gpus = tf.config.experimental.list_physical_devices(device_type="GPU")
@@ -9259,17 +9468,17 @@ else:
 
 if MODE == 'YOLO' or MODE == 'YOLO_TINY':
     with tf.device('/cpu:0'):
-        train_image = Image_Processing.extraction_image(train_path)
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
         random.shuffle(train_image)
-        validation_image = Image_Processing.extraction_image(validation_path)
-        test_image = Image_Processing.extraction_image(test_path)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
         Image_Processing.extraction_label(train_image + validation_image + test_image)
         train_label = Image_Processing.extraction_label(train_image)
         validation_label = Image_Processing.extraction_label(validation_image)
 
-    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(train_path)) / BATCH_SIZE)}}个batch')
+    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
     try:
-        logs = pd.read_csv(csv_path)
+        logs = pd.read_csv(CSV_PATH)
         data = logs.iloc[-1]
         initial_epoch = int(data.get('epoch')) + 1
     except:
@@ -9308,17 +9517,17 @@ if MODE == 'YOLO' or MODE == 'YOLO_TINY':
 
 elif MODE == 'EFFICIENTDET':
     with tf.device('/cpu:0'):
-        train_image = Image_Processing.extraction_image(train_path)
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
         random.shuffle(train_image)
-        validation_image = Image_Processing.extraction_image(validation_path)
-        test_image = Image_Processing.extraction_image(test_path)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
         Image_Processing.extraction_label(train_image + validation_image + test_image)
         train_label = Image_Processing.extraction_label(train_image)
         validation_label = Image_Processing.extraction_label(validation_image)
 
-    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(train_path)) / BATCH_SIZE)}}个batch')
+    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
     try:
-        logs = pd.read_csv(csv_path)
+        logs = pd.read_csv(CSV_PATH)
         data = logs.iloc[-1]
         initial_epoch = int(data.get('epoch')) + 1
     except:
@@ -9353,12 +9562,12 @@ elif MODE == 'EFFICIENTDET':
 
 else:
     with tf.device('/cpu:0'):
-        train_dataset = tf.data.TFRecordDataset(Image_Processing.extraction_image(train_pack_path)).map(
+        train_dataset = tf.data.TFRecordDataset(Image_Processing.extraction_image(TRAIN_PACK_PATH)).map(
             map_func=parse_function, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(
             batch_size=BATCH_SIZE).prefetch(
             buffer_size=BATCH_SIZE)
         logger.debug(train_dataset)
-        validation_dataset = tf.data.TFRecordDataset(Image_Processing.extraction_image(validation_pack_path)).map(
+        validation_dataset = tf.data.TFRecordDataset(Image_Processing.extraction_image(VALIDATION_PACK_PATH)).map(
             map_func=parse_function, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(
             batch_size=BATCH_SIZE).prefetch(
             buffer_size=BATCH_SIZE)
@@ -9368,28 +9577,23 @@ else:
         model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
 
     model.summary()
-
-    if DATA_ENHANCEMENT:
-        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(train_enhance_path)) / BATCH_SIZE)}}个batch')
-    else:
-        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(train_path)) / BATCH_SIZE)}}个batch')
+    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
 
     try:
-        logs = pd.read_csv(csv_path)
+        logs = pd.read_csv(CSV_PATH)
         data = logs.iloc[-1]
         initial_epoch = int(data.get('epoch')) + 1
     except:
         initial_epoch = 0
-    if validation_pack_path:
+    if VALIDATION_PACK_PATH:
         model.fit(train_dataset, initial_epoch=initial_epoch, epochs=EPOCHS, callbacks=c_callback,
                   validation_data=validation_dataset, verbose=2)
     else:
         model.fit(train_dataset, initial_epoch=initial_epoch, epochs=EPOCHS, callbacks=c_callback, verbose=2)
 
-save_model_path = cheak_path(os.path.join(model_path, MODEL_NAME))
+save_model_path = cheak_path(os.path.join(MODEL_PATH, MODEL_NAME))
 
 model.save(save_model_path, save_format='tf')
-
 
 """
 
@@ -9398,7 +9602,7 @@ class New_Work(object):
     def __init__(self, work_path='works', project_name='project'):
         self.work_parh = work_path
         self.project_name = project_name
-        self.work = os.path.join(os.getcwd(), work_path)
+        self.work = os.path.join(os.path.dirname(os.path.abspath(__file__)), work_path)
         if not os.path.exists(self.work):
             os.mkdir(self.work)
         self.path = os.path.join(self.work, self.project_name)
@@ -9494,4 +9698,4 @@ class New_Work(object):
 
 
 if __name__ == '__main__':
-    New_Work(work_path='works', project_name='simples').main()
+    New_Work(work_path='works', project_name='simple').main()
