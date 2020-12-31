@@ -89,7 +89,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### 第一步:新建项目
 
-    运行New_work.py(两个参数第一个是项目路径，第二个是项目名字)
+    运行New_work.py(两个参数第一个是项目一级目录名字，第二个是项目名字)
 
 ### 第二步:初始化工作路径
 
