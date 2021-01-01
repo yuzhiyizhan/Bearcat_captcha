@@ -126,7 +126,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	
 	EFFICIENTDET目标检测 (解决点选，显存占用比较大，最少需要6G)
 	
-	运行cheak_file.py查看自己的数据最大高和宽
+	运行cheak_file.py查看自己的数据最大高和宽顺便检查图片是否损坏
 	
 	IMAGE_HEIGHT和IMAGE_WIDTH最好设置的比数据集的高宽要大
 	

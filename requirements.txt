@@ -1,6 +1,6 @@
 opencv_python==4.4.0.42
 tensorflow_gpu==2.3.0
-requests==2.24.0
+requests
 numpy==1.18.5
 loguru==0.5.1
 matplotlib==3.3.0
@@ -12,7 +12,7 @@ einops==0.3.0
 adabelief_tf==0.1.0
 django_recaptcha==2.0.6
 Pillow==8.0.1
-tensorflow==2.4.0
+tensorflow==2.3.0
 pydot-ng
 graphviz
 captcha

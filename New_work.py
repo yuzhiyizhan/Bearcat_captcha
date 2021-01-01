@@ -304,8 +304,9 @@ def cheak_image(image_path):
             logger.error(e)
             try:
                 logger.error(f'图片: {{image_path}} 已损坏')
-                # os.remove(image_path)
-                # logger.debug(f'已删除{{image_path}}')
+                image_file.close()
+                os.remove(image_path)
+                logger.debug(f'已删除{{image_path}}')
             except Exception as e:
                 logger.error(e)
 
@@ -2234,6 +2235,11 @@ class Predict_Image(object):
             recognition_rate = np.abs(self.recognition_probability(recognition_rate_liat))
             return text, recognition_rate
         elif MODE == 'CTC_TINY':
+            # for i in vector[0]:
+            #     texts = num_classes.get(str(np.argmax(i)))
+            #     if texts:
+            #         text_list.append(texts)
+            # text = ''.join(text_list)
             out = K.get_value(
                 K.ctc_decode(vector, input_length=np.ones(vector.shape[0]) * vector.shape[1], greedy=True)[0][0])
             text = ''.join([num_classes.get(str(x), '') for x in out[0]])
