@@ -253,7 +253,7 @@ def show_image(image):
 
 
 if __name__ == '__main__':
-    gr.Interface(show_label, gr.inputs.Image(), "label").launch()
+    gr.Interface(show_label, gr.inputs.Image(), "label").launch(share=False)
     # gr.Interface(show_image, gr.inputs.Image(), "image").launch()
 
 """
@@ -2796,6 +2796,7 @@ import random
 import collections
 import numpy as np
 import tensorflow as tf
+import tensorflow_addons as tfa
 from loguru import logger
 from functools import wraps
 from six.moves import xrange
@@ -2876,6 +2877,229 @@ class Mish_Activation(tf.keras.layers.Activation):
 
 def mish(inputs):
     return inputs * tf.math.tanh(tf.math.softplus(inputs))
+
+
+class SwitchNormalization(tf.keras.layers.Layer):
+    def __init__(self,
+                 axis=-1,
+                 momentum=0.99,
+                 epsilon=1e-3,
+                 final_gamma=False,
+                 center=True,
+                 scale=True,
+                 beta_initializer='zeros',
+                 gamma_initializer='ones',
+                 mean_weights_initializer='ones',
+                 variance_weights_initializer='ones',
+                 moving_mean_initializer='ones',
+                 moving_variance_initializer='zeros',
+                 beta_regularizer=None,
+                 gamma_regularizer=None,
+                 mean_weights_regularizer=None,
+                 variance_weights_regularizer=None,
+                 beta_constraint=None,
+                 gamma_constraint=None,
+                 mean_weights_constraints=None,
+                 variance_weights_constraints=None,
+                 **kwargs):
+        super(SwitchNormalization, self).__init__(**kwargs)
+        self.supports_masking = True
+        self.axis = axis
+        self.momentum = momentum
+        self.epsilon = epsilon
+        self.center = center
+        self.scale = scale
+
+        self.beta_initializer = tf.keras.initializers.get(beta_initializer)
+        if final_gamma:
+            self.gamma_initializer = tf.keras.initializers.get('zeros')
+        else:
+            self.gamma_initializer = tf.keras.initializers.get(gamma_initializer)
+        self.mean_weights_initializer = tf.keras.initializers.get(mean_weights_initializer)
+        self.variance_weights_initializer = tf.keras.initializers.get(variance_weights_initializer)
+        self.moving_mean_initializer = tf.keras.initializers.get(moving_mean_initializer)
+        self.moving_variance_initializer = tf.keras.initializers.get(moving_variance_initializer)
+        self.beta_regularizer = tf.keras.regularizers.get(beta_regularizer)
+        self.gamma_regularizer = tf.keras.regularizers.get(gamma_regularizer)
+        self.mean_weights_regularizer = tf.keras.regularizers.get(mean_weights_regularizer)
+        self.variance_weights_regularizer = tf.keras.regularizers.get(variance_weights_regularizer)
+        self.beta_constraint = tf.keras.constraints.get(beta_constraint)
+        self.gamma_constraint = tf.keras.constraints.get(gamma_constraint)
+        self.mean_weights_constraints = tf.keras.constraints.get(mean_weights_constraints)
+        self.variance_weights_constraints = tf.keras.constraints.get(variance_weights_constraints)
+
+    def build(self, input_shape):
+        dim = input_shape[self.axis]
+
+        if dim is None:
+            raise ValueError('Axis ' + str(self.axis) + ' of '
+                                                        'input tensor should have a defined dimension '
+                                                        'but the layer received an input with shape ' +
+                             str(input_shape) + '.')
+
+        self.input_spec = tf.keras.layers.InputSpec(ndim=len(input_shape),
+                                                    axes={{self.axis: dim}})
+        shape = (dim,)
+
+        if self.scale:
+            self.gamma = self.add_weight(
+                shape=shape,
+                name='gamma',
+                initializer=self.gamma_initializer,
+                regularizer=self.gamma_regularizer,
+                constraint=self.gamma_constraint)
+        else:
+            self.gamma = None
+        if self.center:
+            self.beta = self.add_weight(
+                shape=shape,
+                name='beta',
+                initializer=self.beta_initializer,
+                regularizer=self.beta_regularizer,
+                constraint=self.beta_constraint)
+        else:
+            self.beta = None
+
+        self.moving_mean = self.add_weight(
+            shape=shape,
+            name='moving_mean',
+            initializer=self.moving_mean_initializer,
+            trainable=False)
+
+        self.moving_variance = self.add_weight(
+            shape=shape,
+            name='moving_variance',
+            initializer=self.moving_variance_initializer,
+            trainable=False)
+
+        self.mean_weights = self.add_weight(
+            shape=(3,),
+            name='mean_weights',
+            initializer=self.mean_weights_initializer,
+            regularizer=self.mean_weights_regularizer,
+            constraint=self.mean_weights_constraints)
+
+        self.variance_weights = self.add_weight(
+            shape=(3,),
+            name='variance_weights',
+            initializer=self.variance_weights_initializer,
+            regularizer=self.variance_weights_regularizer,
+            constraint=self.variance_weights_constraints)
+
+        self.built = True
+
+    def call(self, inputs, training=None):
+        input_shape = K.int_shape(inputs)
+
+        # Prepare broadcasting shape.
+        reduction_axes = list(range(len(input_shape)))
+        del reduction_axes[self.axis]
+
+        if self.axis != 0:
+            del reduction_axes[0]
+
+        broadcast_shape = [1] * len(input_shape)
+        broadcast_shape[self.axis] = input_shape[self.axis]
+
+        mean_instance = K.mean(inputs, reduction_axes, keepdims=True)
+        variance_instance = K.var(inputs, reduction_axes, keepdims=True)
+
+        mean_layer = K.mean(mean_instance, self.axis, keepdims=True)
+        temp = variance_instance + K.square(mean_instance)
+        variance_layer = K.mean(temp, self.axis, keepdims=True) - K.square(mean_layer)
+
+        def training_phase():
+            mean_batch = K.mean(mean_instance, axis=0, keepdims=True)
+            variance_batch = K.mean(temp, axis=0, keepdims=True) - K.square(mean_batch)
+
+            mean_batch_reshaped = K.flatten(mean_batch)
+            variance_batch_reshaped = K.flatten(variance_batch)
+
+            if K.backend() != 'cntk':
+                sample_size = K.prod([K.shape(inputs)[axis]
+                                      for axis in reduction_axes])
+                sample_size = K.cast(sample_size, dtype=K.dtype(inputs))
+
+                # sample variance - unbiased estimator of population variance
+                variance_batch_reshaped *= sample_size / (sample_size - (1.0 + self.epsilon))
+
+            self.add_update([K.moving_average_update(self.moving_mean,
+                                                     mean_batch_reshaped,
+                                                     self.momentum),
+                             K.moving_average_update(self.moving_variance,
+                                                     variance_batch_reshaped,
+                                                     self.momentum)],
+                            inputs)
+
+            return normalize_func(mean_batch, variance_batch)
+
+        def inference_phase():
+            mean_batch = self.moving_mean
+            variance_batch = self.moving_variance
+
+            return normalize_func(mean_batch, variance_batch)
+
+        def normalize_func(mean_batch, variance_batch):
+            mean_batch = K.reshape(mean_batch, broadcast_shape)
+            variance_batch = K.reshape(variance_batch, broadcast_shape)
+
+            mean_weights = K.softmax(self.mean_weights, axis=0)
+            variance_weights = K.softmax(self.variance_weights, axis=0)
+
+            mean = (mean_weights[0] * mean_instance +
+                    mean_weights[1] * mean_layer +
+                    mean_weights[2] * mean_batch)
+
+            variance = (variance_weights[0] * variance_instance +
+                        variance_weights[1] * variance_layer +
+                        variance_weights[2] * variance_batch)
+
+            outputs = (inputs - mean) / (K.sqrt(variance + self.epsilon))
+
+            if self.scale:
+                broadcast_gamma = K.reshape(self.gamma, broadcast_shape)
+                outputs = outputs * broadcast_gamma
+
+            if self.center:
+                broadcast_beta = K.reshape(self.beta, broadcast_shape)
+                outputs = outputs + broadcast_beta
+
+            return outputs
+
+        if training in {{0, False}}:
+            return inference_phase()
+
+        return K.in_train_phase(training_phase,
+                                inference_phase,
+                                training=training)
+
+    def get_config(self):
+        config = {{
+            'axis': self.axis,
+            'epsilon': self.epsilon,
+            'momentum': self.momentum,
+            'center': self.center,
+            'scale': self.scale,
+            'beta_initializer': tf.keras.initializers.serialize(self.beta_initializer),
+            'gamma_initializer': tf.keras.initializers.serialize(self.gamma_initializer),
+            'mean_weights_initializer': tf.keras.initializers.serialize(self.mean_weights_initializer),
+            'variance_weights_initializer': tf.keras.initializers.serialize(self.variance_weights_initializer),
+            'moving_mean_initializer': tf.keras.initializers.serialize(self.moving_mean_initializer),
+            'moving_variance_initializer': tf.keras.initializers.serialize(self.moving_variance_initializer),
+            'beta_regularizer': tf.keras.regularizers.serialize(self.beta_regularizer),
+            'gamma_regularizer': tf.keras.regularizers.serialize(self.gamma_regularizer),
+            'mean_weights_regularizer': tf.keras.regularizers.serialize(self.mean_weights_regularizer),
+            'variance_weights_regularizer': tf.keras.regularizers.serialize(self.variance_weights_regularizer),
+            'beta_constraint': tf.keras.constraints.serialize(self.beta_constraint),
+            'gamma_constraint': tf.keras.constraints.serialize(self.gamma_constraint),
+            'mean_weights_constraints': tf.keras.constraints.serialize(self.mean_weights_constraints),
+            'variance_weights_constraints': tf.keras.constraints.serialize(self.variance_weights_constraints),
+        }}
+        base_config = super(SwitchNormalization, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
 
 
 tf.keras.utils.get_custom_objects().update({{'Mish_Activation': Mish_Activation(mish)}})
@@ -6652,6 +6876,17 @@ class Model_Structure(object):
         return x
 
     @staticmethod
+    def se_block(x, ratio=16, channel_axis=-1):
+        filters = x.get_shape().as_list()[channel_axis]
+        se = tf.keras.layers.GlobalAveragePooling2D()(x)
+        ex = tf.keras.layers.Dense(filters // ratio, use_bias=True)(se)
+        ex = tf.keras.layers.Activation('relu')(ex)
+        ex = tf.keras.layers.Dense(filters, use_bias=True)(ex)
+        ex = tf.keras.layers.Activation('sigmoid')(ex)
+        ex = tf.reshape(ex, [-1, 1, 1, filters])
+        return x * ex
+
+    @staticmethod
     def regnet_make_attention(input_tensor, input_type='2d', SEstyle_atten='SE'):
         x = input_tensor
         if SEstyle_atten == 'SE':
@@ -7066,7 +7301,7 @@ class Model_Structure(object):
             axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
             x1)
         x1 = tf.keras.layers.Activation('Mish_Activation', name=name + '_1_relu')(x1)
-        x1 = Model_Structure.regnet_squeeze_excite_block(x1)
+        x1 = Model_Structure.se_block(x1)
         x1 = tf.keras.layers.Conv2D(
             growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
             x1)
@@ -7213,6 +7448,86 @@ class Model_Structure(object):
         x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
         return x
 
+    @staticmethod
+    def densenet_dense_block_sw(x, blocks, name):
+        for i in range(blocks):
+            x = Model_Structure.densenet_conv_block_sw(x, 32, name=name + '_block' + str(i + 1))
+        return x
+
+    @staticmethod
+    def densenet_transition_block_sw(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = SwitchNormalization()(x)
+        x = tf.keras.layers.Activation('relu', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1,
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        x = tf.keras.layers.AveragePooling2D(2, strides=2, name=name + '_pool')(x)
+        return x
+
+    @staticmethod
+    def densenet_conv_block_sw(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x1 = SwitchNormalization()(x)
+        x1 = tf.keras.layers.Activation('relu', name=name + '_0_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, use_bias=False, name=name + '_1_conv')(
+            x1)
+        x1 = SwitchNormalization()(x1)
+        x1 = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x1)
+        x1 = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x1)
+        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
+
+    @staticmethod
+    def densenet_dense_block_g(x, blocks, name):
+        for i in range(blocks):
+            x = Model_Structure.densenet_conv_block_g(x, 32, name=name + '_block' + str(i + 1))
+        return x
+
+    @staticmethod
+    def densenet_transition_block_g(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_bn')(
+            x)
+        x = tf.keras.layers.Activation('swish', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1,
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        x = tf.keras.layers.AveragePooling2D(2, strides=2, name=name + '_pool')(x)
+        return x
+
+    @staticmethod
+    def densenet_conv_block_g(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(
+            x)
+        x1 = tf.keras.layers.Activation('swish', name=name + '_0_relu')(x1)
+        x1 = tf.keras.layers.GaussianNoise(0.5)(x1)
+        x1 = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, use_bias=False, name=name + '_1_conv')(
+            x1)
+        x1 = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
+            x1)
+        x1 = tf.keras.layers.Activation('swish', name=name + '_1_relu')(x1)
+        x1 = tf.keras.layers.GaussianNoise(0.5)(x1)
+        x1 = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x1)
+        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
+
 
 class Get_Model(object):
     # DenseNet
@@ -7243,6 +7558,32 @@ class Get_Model(object):
 
     # DIY
     @staticmethod
+    def DenseNet_G(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('swish', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+
+        x = Model_Structure.densenet_dense_block_g(x, block[0], name='conv2')
+        x = Model_Structure.densenet_transition_block_g(x, 0.5, name='pool2')
+        x = Model_Structure.densenet_dense_block_g(x, block[1], name='conv3')
+        x = Model_Structure.densenet_transition_block_g(x, 0.5, name='pool3')
+        x = Model_Structure.densenet_dense_block_g(x, block[2], name='conv4')
+        x = Model_Structure.densenet_transition_block_g(x, 0.5, name='pool4')
+        x = Model_Structure.densenet_dense_block_g(x, block[3], name='conv5')
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('swish', name='relu')(x)
+        return x
+
+    # DIY
+    @staticmethod
     def DenseNet_D(inputs, block, **kwargs):
         bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
 
@@ -7265,6 +7606,29 @@ class Get_Model(object):
 
         x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
         x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
+        return x
+
+    @staticmethod
+    def DenseNet_SW(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+        x = Model_Structure.densenet_dense_block_sw(x, block[0], name='conv2')
+        x = Model_Structure.densenet_transition_block_sw(x, 0.5, name='pool2')
+        x = Model_Structure.densenet_dense_block_sw(x, block[1], name='conv3')
+        x = Model_Structure.densenet_transition_block_sw(x, 0.5, name='pool3')
+        x = Model_Structure.densenet_dense_block_sw(x, block[2], name='conv4')
+        x = Model_Structure.densenet_transition_block_sw(x, 0.5, name='pool4')
+        x = Model_Structure.densenet_dense_block_sw(x, block[3], name='conv5')
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('relu', name='relu')(x)
         return x
 
     # EfficientNet
@@ -8122,7 +8486,7 @@ class Get_Model(object):
 
     # MobileNetV3Small
     @staticmethod
-    def MobileNetV3Small(inputs, last_point_ch=1024, alpha=1.0,
+    def MobileNetV3Small(input_tensor, last_point_ch=1024, alpha=1.0,
                          minimalistic=False, model_type='small', weights=None, **kwargs):
 
         def hard_sigmoid(x):
@@ -8160,7 +8524,7 @@ class Get_Model(object):
             activation = hard_sigmoid
             se_ratio = 0.25
 
-        x = inputs
+        x = input_tensor
         x = tf.python.keras.layers.VersionAwareLayers().Rescaling(1. / 255.)(x)
         x = tf.keras.layers.Conv2D(
             16,
@@ -8200,7 +8564,7 @@ class Get_Model(object):
             name='Conv_2')(x)
         x = activation(x)
         if weights == 'imagenet':
-            model = tf.keras.Model(inputs, x, name='MobilenetV3' + model_type)
+            model = tf.keras.Model(input_tensor, x, name='MobilenetV3' + model_type)
             model_name = '{{}}{{}}_224_{{}}_float'.format(
                 model_type, '_minimalistic' if minimalistic else '', str(alpha))
             weights_hashes = {{
@@ -8232,7 +8596,7 @@ class Get_Model(object):
 
     # MobileNetV3Large
     @staticmethod
-    def MobileNetV3Large(inputs, last_point_ch=1280, alpha=1.0,
+    def MobileNetV3Large(input_tensor, last_point_ch=1280, alpha=1.0,
                          minimalistic=False, model_type='large', weights=None, **kwargs):
         def hard_sigmoid(x):
             return tf.keras.layers.ReLU(6.)(x + 3.) * (1. / 6.)
@@ -8275,7 +8639,7 @@ class Get_Model(object):
             activation = hard_sigmoid
             se_ratio = 0.25
 
-        x = inputs
+        x = input_tensor
         x = tf.python.keras.layers.VersionAwareLayers().Rescaling(1. / 255.)(x)
         x = tf.keras.layers.Conv2D(
             16,
@@ -8315,7 +8679,7 @@ class Get_Model(object):
             name='Conv_2')(x)
         x = activation(x)
 
-        model = tf.keras.models.Model(inputs, x, name='MobilenetV3' + model_type)
+        model = tf.keras.models.Model(input_tensor, x, name='MobilenetV3' + model_type)
 
         # Load weights.
         if weights == 'imagenet':
@@ -8778,7 +9142,7 @@ class Models(object):
     @staticmethod
     def captcha_model():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.DenseNet_D(inputs, block=[6, 12, 32, 32])
+        x = Get_Model.SE_DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -8793,11 +9157,13 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = tf.keras.applications.DenseNet169(include_top=False, weights=None)(inputs)
+        x = tf.keras.applications.DenseNet169(input_tensor=inputs, include_top=False, weights='imagenet')
+        x = x.output
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
@@ -8807,10 +9173,10 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = tf.keras.applications.MobileNetV2(include_top=False, weights=None)(inputs)
+        x = tf.keras.applications.MobileNetV2(input_tensor=inputs, include_top=False, weights=None)
         x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
                                    kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x)
+                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x.output)
         x = tf.keras.layers.Reshape((-1, 512))(x)
         x = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(units=256, return_sequences=True, use_bias=True, recurrent_activation='sigmoid'))(
@@ -8826,11 +9192,9 @@ class Models(object):
         return model
 
     @staticmethod
-    def captcha_ctc_tiny(num_init_features=64, growth_rate=32, block_layers=[6, 12, 64, 48],
-                         compression_rate=0.5,
-                         drop_rate=0.5, mask=None, training=False):
+    def captcha_ctc_tiny(training=False):
         inputs = tf.keras.layers.Input(shape=inputs_shape, name='inputs')
-        x = Get_Model.GhostNet(inputs)
+        x = Get_Model.DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.Reshape((x.shape[1] * x.shape[2], x.shape[3]), name='reshape_len')(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
@@ -8992,32 +9356,32 @@ class Models(object):
 
 ## tf.keras(加载imagenet权重，冻结部分层的权重可以加速训练并获得不错的效果)
 ## tf2.3版本可用的模型
-# x = tf.keras.applications.MobileNet(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.MobileNetV2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.NASNetLarge(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.NASNetMobile(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet50(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet50V2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet101(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet101V2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet152(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.ResNet152V2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.DenseNet121(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.DenseNet169(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.DenseNet201(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB0(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB1(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB3(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB4(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB5(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB6(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.EfficientNetB7(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.Xception(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.InceptionResNetV2(include_top=False, weights='imagenet')(inputs)
-# x = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')(inputs)
-# x = Get_Model.MobileNetV3Small(inputs, weights='imagenet')(inputs)
-# x = Get_Model.MobileNetV3Large(inputs, weights='imagenet')(inputs)
+# x = tf.keras.applications.MobileNet(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.MobileNetV2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.NASNetLarge(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.NASNetMobile(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet50(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet50V2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet101(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet101V2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet152(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.ResNet152V2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.DenseNet121(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.DenseNet169(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.DenseNet201(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB0(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB1(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB3(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB4(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB5(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB6(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.EfficientNetB7(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.Xception(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.InceptionResNetV2(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = tf.keras.applications.InceptionV3(input_tensor=inputs, include_top=False, weights='imagenet')
+# x = Get_Model.MobileNetV3Small(input_tensor=inputs, weights='imagenet')
+# x = Get_Model.MobileNetV3Large(input_tensor=inputs, weights='imagenet')
 
 ## 冻结部分层的权重代码(模型编译前冻结即可)
 # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
