@@ -31,9 +31,9 @@ IDE:pycharm
 
 使用cpu训练和gpu训练使用的网络结构不一样，后面会提到
 
-项目不会提供任何模型，所有模型需自行训练(只提供渔，不提供鱼)
+项目不会提供任何训练好的模型，所有模型需自行训练(只提供渔，不提供鱼)
 
-除了验证码外，其他任务思路是一样的(例如猫狗大战等)
+除了验证码外，其他任务思路是一样的(例如猫狗大战，垃圾分类等)
 
 # 1.项目环境安装与启动
 ## 1.1 环境安装
@@ -130,9 +130,15 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	
 	IMAGE_HEIGHT和IMAGE_WIDTH最好设置的比数据集的高宽要大
 	
+	图片越大占用显存越多，视情况设置
+	
 	本项目对小于配置文件高宽图片的处理是填充
 	
 	大于配置文件高宽的图片先进行等比缩小然后再填充
+	
+	填充的值为255也就是白色
+	
+	注意:IMAGE_CHANNALS为1时，不能载入imagenet的模型权重
 
 ### 第五步:打包数据
 
@@ -148,6 +154,8 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	注意:如果显存不足或者效果不好
 	
 	请灵活选择或自行搭建模型
+	
+	或者将图片的高宽减少
 
 ### 第七步:开始训练
 
@@ -260,9 +268,6 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### train_dataset
     保存训练集
     
-### train_enhance_dataset
-    保存增强后的训练集
-    
 ### train_pack_dataset
     保存打包好的训练集
     
@@ -351,6 +356,10 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### test.py
     读取模型进行测试
+	
+	Predict.predict_image(image)返回的是PIL图片对象
+	
+	可以用.show()查看处理后的图片
 
 ### train.py
     开始训练
@@ -393,9 +402,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	例如:
 	def captcha_model():
 	inputs = tf.keras.layers.Input(shape=inputs_shape)
-	x = Densenet.Densenet(inputs, num_init_features=64, growth_rate=32, block_layers=[6, 12, 32, 32],
-						  compression_rate=0.5,
-						  drop_rate=0.5)
+	x = Get_Model.SE_DenseNet(inputs, block=[6, 12, 32, 32])
 	outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
 									activation=tf.keras.activations.softmax)(x)
 	outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
@@ -411,7 +418,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	例如:
 	def captcha_model():
 		inputs = tf.keras.layers.Input(shape=inputs_shape)
-		x = Mobilenet.MobileNetV3Small(inputs) ###替换了这里
+		x = Get_Model.MobileNetV2(inputs) ###替换了这里
 		outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
 										activation=tf.keras.activations.softmax)(x)
 		outputs = tf.keras.layers.Reshape((CAPTCHA_LENGTH, Settings.settings()))(outputs)
@@ -422,7 +429,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 					  metrics=['acc'])
 		return model
 
-	注意:模型经过少许魔改可能和大佬原来的网络结构有所不同
+	注意:里面有部分魔改模型
 	
 ### 保存训练到一定进度的模型(最少一轮)
 	很多时候模型训练的差不多了
@@ -506,10 +513,19 @@ tf.Tensor(
         nh = int(ih * scale)
         image = image.resize((nw, nh), Image.BICUBIC)
         if IMAGE_CHANNALS == 3:
-            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
+            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
         else:
-            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
-        new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image = new_image.convert('L')
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            table = []
+            for i in range(256):
+                if i == 255:
+                    table.append(255)
+                else:
+                    table.append(0)
+            new_image = new_image.point(table, 'L')
         new_image.show()
 		
 可以找张图片看下图片会被处理成什么样子

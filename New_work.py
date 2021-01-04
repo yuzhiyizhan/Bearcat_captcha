@@ -426,6 +426,12 @@ right_value = 0
 predicted_value = 0
 start = time.time()
 time_list = []
+table = []
+for i in range(256):
+    if i == 255:
+        table.append(255)
+    else:
+        table.append(0)
 try:
     if MODE == 'CTC_TINY':
         input_len = np.int64(Models.captcha_ctc_tiny().get_layer('reshape_len').output_shape[1])
@@ -780,10 +786,19 @@ class Image_Processing(object):
         nh = int(ih * scale)
         image = image.resize((nw, nh), Image.BICUBIC)
         if IMAGE_CHANNALS == 3:
-            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
+            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
         else:
-            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
-        new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image = new_image.convert('L')
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            table = []
+            for i in range(256):
+                if i == 255:
+                    table.append(255)
+                else:
+                    table.append(0)
+            new_image = new_image.point(table, 'L')
         new_image.show()
 
     @staticmethod
@@ -813,34 +828,6 @@ class Image_Processing(object):
         cv2.waitKey(0)
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-
-    @staticmethod
-    # 对图片进行解码,预测
-    def load_image(image):
-        try:
-            with open(image, 'rb') as image_file:
-                image = Image.open(image_file)
-            while True:
-                width, height = image.size
-                if IMAGE_HEIGHT < height:
-                    resize_width = int(IMAGE_HEIGHT / height * width)
-                    image = image.resize((resize_width, IMAGE_HEIGHT))
-                if IMAGE_WIDTH < width:
-                    resize_height = int(IMAGE_WIDTH / width * height)
-                    image = image.resize((IMAGE_WIDTH, resize_height))
-                if IMAGE_WIDTH >= width and IMAGE_HEIGHT >= height:
-                    break
-                width, height = image.size
-                image = np.array(image)
-                image = np.pad(image, ((0, IMAGE_HEIGHT - height), (0, IMAGE_WIDTH - width), (0, 0)), 'constant',
-                               constant_values=0)
-                image = np.expand_dims(image, axis=0)
-                image = image / 255.
-                image_file.close()
-            return image
-        except IOError as e:
-            logger.error(e)
-            raise IOError('IO错误')
 
 
 class YOLO_Generator(object):
@@ -1330,10 +1317,13 @@ class WriteTFRecord(object):
         nh = int(ih * scale)
         image = image.resize((nw, nh), Image.BICUBIC)
         if IMAGE_CHANNALS == 3:
-            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
+            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
         else:
-            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
-        new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image = new_image.convert('L')
+            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+            new_image = new_image.point(table, 'L')
         image = np.array(new_image)
         image = Image.fromarray(image)
         image_bytearr = io.BytesIO()
@@ -2158,10 +2148,13 @@ class Predict_Image(object):
             nh = int(ih * scale)
             image = image.resize((nw, nh), Image.BICUBIC)
             if IMAGE_CHANNALS == 3:
-                new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
+                new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+                new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
             else:
-                new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
-            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+                new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+                new_image = new_image.convert('L')
+                new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+                new_image = new_image.point(table, 'L')
             image = np.array(new_image, dtype=np.float32)
             image = np.expand_dims(image, axis=0)
             image = image / 255.
@@ -2178,10 +2171,13 @@ class Predict_Image(object):
                 nh = int(ih * scale)
                 image = image.resize((nw, nh), Image.BICUBIC)
                 if IMAGE_CHANNALS == 3:
-                    new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
+                    new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+                    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
                 else:
-                    new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0))
-                new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+                    new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+                    new_image = new_image.convert('L')
+                    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+                    new_image = new_image.point(table, 'L')
                 image = np.array(new_image, dtype=np.float32)
                 image = np.expand_dims(image, axis=0)
                 image = image / 255.
@@ -2438,13 +2434,14 @@ class Predict_Image(object):
                 model = self.model
                 input_details = model.get_input_details()
                 output_details = model.get_output_details()
-                input_data = self.decode_image(image)
-                model.set_tensor(input_details[0]['index'], input_data)
+                image_object = self.decode_image(image)
+                model.set_tensor(input_details[0]['index'], image_object)
                 model.invoke()
                 vertor = model.get_tensor(output_details[0]['index'])
             else:
                 model = self.model
-                vertor = model.predict(self.decode_image(image))
+                image_object = self.decode_image(image)
+                vertor = model.predict(image_object)
             text, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
             right_text = self.decode_label(image)
             logger.info(f'预测为{{text}},真实为{{right_text}}') if text == right_text else logger.error(
@@ -2466,6 +2463,7 @@ class Predict_Image(object):
             end_time = time.time()
             logger.info(f'已识别{{right_value}}张图片')
             logger.info(f'识别时间为{{end_time - start_time}}s')
+            return Image.fromarray(image_object[0]*255)
 
     def close_session(self):
         if MODE == 'YOLO' or MODE == 'YOLO_TINY':
