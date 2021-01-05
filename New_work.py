@@ -347,7 +347,6 @@ from {work_path}.{project_name}.settings import LABEL_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PATH
 from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
-from {work_path}.{project_name}.settings import TEST_PACK_PATH
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -360,7 +359,7 @@ def del_file(path):
 
 
 if __name__ == '__main__':
-    path = [TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH, TEST_PACK_PATH, LABEL_PATH,
+    path = [TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH, LABEL_PATH,
             WEIGHT]
     with ThreadPoolExecutor(max_workers=50) as t:
         for i in path:
@@ -380,6 +379,7 @@ import glob
 import base64
 import shutil
 import random
+import hashlib
 import colorsys
 import operator
 import requests
@@ -406,6 +406,7 @@ from {work_path}.{project_name}.settings import MODE
 from {work_path}.{project_name}.settings import MODEL
 from {work_path}.{project_name}.settings import DIVIDE
 from {work_path}.{project_name}.settings import PRUNING
+from {work_path}.{project_name}.settings import THRESHOLD
 from {work_path}.{project_name}.settings import MAX_BOXES
 from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import LABEL_PATH
@@ -428,10 +429,10 @@ start = time.time()
 time_list = []
 table = []
 for i in range(256):
-    if i == 255:
-        table.append(255)
-    else:
+    if i < THRESHOLD:
         table.append(0)
+    else:
+        table.append(255)
 try:
     if MODE == 'CTC_TINY':
         input_len = np.int64(Models.captcha_ctc_tiny().get_layer('reshape_len').output_shape[1])
@@ -794,10 +795,10 @@ class Image_Processing(object):
             new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
             table = []
             for i in range(256):
-                if i == 255:
-                    table.append(255)
-                else:
+                if i < THRESHOLD:
                     table.append(0)
+                else:
+                    table.append(255)
             new_image = new_image.point(table, 'L')
         new_image.show()
 
@@ -2463,7 +2464,7 @@ class Predict_Image(object):
             end_time = time.time()
             logger.info(f'已识别{{right_value}}张图片')
             logger.info(f'识别时间为{{end_time - start_time}}s')
-            return Image.fromarray(image_object[0]*255)
+            return Image.fromarray(image_object[0] * 255)
 
     def close_session(self):
         if MODE == 'YOLO' or MODE == 'YOLO_TINY':
@@ -2672,6 +2673,13 @@ def running_time(time):
             return str('%.2f' % m) + 'm'
     else:
         return str('%.2f' % time) + 's'
+
+
+def MD5(str_input):
+    m5 = hashlib.md5()
+    m5.update(str(str_input).encode('utf-8'))
+    str_input = m5.hexdigest()
+    return str_input
 
 """
 
@@ -9171,11 +9179,9 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = tf.keras.applications.MobileNetV2(input_tensor=inputs, include_top=False, weights=None)
-        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same',
-                                   kernel_initializer=tf.keras.initializers.he_normal(),
-                                   kernel_regularizer=tf.keras.regularizers.l2(5e-4))(x.output)
-        x = tf.keras.layers.Reshape((-1, 512))(x)
+        x = Get_Model.MobileNetV3Small(inputs)
+        filters = x.get_shape().as_list()[-1]
+        x = tf.keras.layers.Reshape((-1, filters))(x)
         x = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(units=256, return_sequences=True, use_bias=True, recurrent_activation='sigmoid'))(
             x)
@@ -9190,7 +9196,7 @@ class Models(object):
         return model
 
     @staticmethod
-    def captcha_ctc_tiny(training=False):
+    def captcha_model_ctc_tiny(training=False):
         inputs = tf.keras.layers.Input(shape=inputs_shape, name='inputs')
         x = Get_Model.DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.Reshape((x.shape[1] * x.shape[2], x.shape[3]), name='reshape_len')(x)
@@ -9532,6 +9538,9 @@ IMAGE_WIDTH = 120
 # 图片通道
 IMAGE_CHANNALS = 3
 
+# 二值化阈值(图片通道为3时生效)
+THRESHOLD = 180
+
 # 验证码的长度
 CAPTCHA_LENGTH = 8
 
@@ -9572,7 +9581,7 @@ elif MODE == 'NUM_CLASSES':
 elif MODE == 'CTC':
     MODEL = 'captcha_model_ctc'
 elif MODE == 'CTC_TINY':
-    MODEL = 'captcha_ctc_tiny'
+    MODEL = 'captcha_model_ctc_tiny'
 elif MODE == 'YOLO':
     MODEL = 'captcha_model_yolo'
 elif MODE == 'YOLO_TINY':
@@ -9639,9 +9648,6 @@ TRAIN_PACK_PATH = os.path.join(BASIC_PATH, 'train_pack_dataset')
 
 # TF验证集(打包后)
 VALIDATION_PACK_PATH = os.path.join(BASIC_PATH, 'validation_pack_dataset')
-
-# TF测试集(打包后)
-TEST_PACK_PATH = os.path.join(BASIC_PATH, 'test_pack_dataset')
 
 # 提供后端放置的模型路径
 APP_MODEL_PATH = os.path.join(BASIC_PATH, 'App_model')
