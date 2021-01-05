@@ -435,7 +435,7 @@ for i in range(256):
         table.append(255)
 try:
     if MODE == 'CTC_TINY':
-        input_len = np.int64(Models.captcha_ctc_tiny().get_layer('reshape_len').output_shape[1])
+        input_len = np.int64(Models.captcha_model_ctc_tiny().get_layer('reshape_len').output_shape[1])
 except:
     pass
 
@@ -2464,7 +2464,7 @@ class Predict_Image(object):
             end_time = time.time()
             logger.info(f'已识别{{right_value}}张图片')
             logger.info(f'识别时间为{{end_time - start_time}}s')
-            return Image.fromarray(image_object[0] * 255)
+            #return Image.fromarray(image_object[0] * 255)
 
     def close_session(self):
         if MODE == 'YOLO' or MODE == 'YOLO_TINY':
@@ -5082,6 +5082,12 @@ class Settings(object):
         with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             n_class = len(json.loads(f.read()))
         return n_class
+
+    @staticmethod
+    def settings_crnn():
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
+            n_class = len(json.loads(f.read()))
+        return n_class + 3
 
 
 class Yolov3_block(object):
@@ -9031,6 +9037,27 @@ class Get_Model(object):
         x = stack_fn(x)
         return x
 
+    # CRNN
+    @staticmethod
+    def CRNN(inputs):
+        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, padding='same', activation='relu')(inputs)
+        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='valid')(x)
+        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, padding='same', activation='relu')(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='valid')(x)
+        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same')(x)
+        x = tf.keras.layers.BatchNormalization(epsilon=1e-05, axis=1, momentum=0.1)(x)
+        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=(0, 1))(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 1), padding='valid')(x)
+        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same', activation='relu')(x)
+        x = tf.keras.layers.BatchNormalization(epsilon=1e-05, axis=1, momentum=0.1)(x)
+        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, padding='same', activation='relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=(0, 1))(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 1), padding='valid')(x)
+        x = tf.keras.layers.Conv2D(filters=512, kernel_size=2, padding='valid', activation='relu')(x)
+        x = tf.keras.layers.BatchNormalization(epsilon=1e-05, axis=1, momentum=0.1)(x)
+        return x
+
 
 class Models(object):
     @staticmethod
@@ -9179,7 +9206,7 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.MobileNetV3Small(inputs)
+        x = Get_Model.CRNN(inputs)
         filters = x.get_shape().as_list()[-1]
         x = tf.keras.layers.Reshape((-1, filters))(x)
         x = tf.keras.layers.Bidirectional(
@@ -9188,7 +9215,7 @@ class Models(object):
         x = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(units=256, return_sequences=True, use_bias=True, recurrent_activation='sigmoid'))(
             x)
-        outputs = tf.keras.layers.Dense(units=Settings.settings())(x)
+        outputs = tf.keras.layers.Dense(units=Settings.settings_crnn())(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
