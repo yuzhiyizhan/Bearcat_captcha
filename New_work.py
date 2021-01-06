@@ -4526,6 +4526,13 @@ class Efficientdet_anchors(object):
         return swish
 
     @staticmethod
+    def get_relu():
+        def relu(x):
+            return tf.nn.relu(x)
+
+        return relu
+
+    @staticmethod
     def get_dropout():
         class FixedDropout(tf.keras.layers.Dropout):
             def _get_noise_shape(self, inputs):
@@ -5635,6 +5642,7 @@ def Efficientdet(width_coefficient, depth_coefficient, default_resolution, dropo
 
     bn_axis = 3
     activation = Efficientdet_anchors.get_swish()
+    # activation = Efficientdet_anchors.get_relu()
 
     x = img_input
     x = tf.keras.layers.Conv2D(Efficientdet_anchors.round_filters(32, width_coefficient, depth_divisor), 3,
@@ -9457,10 +9465,9 @@ from concurrent.futures import ThreadPoolExecutor
 if DATA_ENHANCEMENT:
     image_path = Image_Processing.extraction_image(TRAIN_PATH)
     number = len(image_path)
-    with ThreadPoolExecutor(max_workers=100) as t:
-        for i in image_path:
-            number = number - 1
-            task = t.submit(Image_Processing.preprosess_save_images, i, number)
+    for i in image_path:
+        number = number - 1
+        Image_Processing.preprosess_save_images(i, number)
 
 train_image = Image_Processing.extraction_image(TRAIN_PATH)
 random.shuffle(train_image)
