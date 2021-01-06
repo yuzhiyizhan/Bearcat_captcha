@@ -521,10 +521,10 @@ tf.Tensor(
             new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
             table = []
             for i in range(256):
-                if i == 255:
-                    table.append(255)
-                else:
+                if i < THRESHOLD:
                     table.append(0)
+                else:
+                    table.append(255)
             new_image = new_image.point(table, 'L')
         new_image.show()
 		
@@ -669,8 +669,6 @@ CTC的标签比较简单，比如1表示龙，2表示舟
 ### ***此项目以研究学习为目的，禁止用于非法用途***
 ### 再次说明项目的tensorflow的版本是(2.2)(2.3)不要搞错了
 
-
-### 模型保存在分支,与大家共同学习(建议自己训练)
 
 ### ps:新手上路，轻喷
 ### 如果觉得我写的不好或者想教我CRNN + CTC 或者有不懂的地方
