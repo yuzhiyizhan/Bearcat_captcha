@@ -11541,22 +11541,28 @@ if MODE == 'YOLO' or MODE == 'YOLO_TINY':
 
 
 elif MODE == 'EFFICIENTDET':
+    with tf.device('/cpu:0'):
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
+        random.shuffle(train_image)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
+        Image_Processing.extraction_label(train_image + validation_image + test_image)
+        train_label = Image_Processing.extraction_label(train_image)
+        validation_label = Image_Processing.extraction_label(validation_image)
+
+    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
+
+    model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
+    model.summary()
+    priors = Efficientdet_anchors.get_anchors(IMAGE_SIZES[PHI])
+    bbox_util = EfficientDet_BBoxUtility(Settings.settings_num_classes(), priors)
     for _ in range(EPOCHS):
-        with tf.device('/cpu:0'):
-            train_image = Image_Processing.extraction_image(TRAIN_PATH)
-            random.shuffle(train_image)
-            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-            test_image = Image_Processing.extraction_image(TEST_PATH)
-            Image_Processing.extraction_label(train_image + validation_image + test_image)
-            train_label = Image_Processing.extraction_label(train_image)
-            validation_label = Image_Processing.extraction_label(validation_image)
-
-        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
-
-        model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
-        model.summary()
-        priors = Efficientdet_anchors.get_anchors(IMAGE_SIZES[PHI])
-        bbox_util = EfficientDet_BBoxUtility(Settings.settings_num_classes(), priors)
+        try:
+            logs = pd.read_csv(CSV_PATH)
+            data = logs.iloc[-1]
+            initial_epoch = int(data.get('epoch')) + 1
+        except:
+            initial_epoch = 0
         if validation_image:
             model.fit(
                 Efficientdet_Generator(bbox_util, BATCH_SIZE, train_image, train_label,
@@ -11567,8 +11573,8 @@ elif MODE == 'EFFICIENTDET':
                                                        Settings.settings_num_classes()).generate(),
                 validation_steps=max(1, len(validation_image) // BATCH_SIZE),
                 steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-                initial_epoch=0,
-                epochs=1,
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
                 verbose=2,
                 callbacks=c_callback)
         else:
@@ -11578,28 +11584,35 @@ elif MODE == 'EFFICIENTDET':
                                        (IMAGE_SIZES[PHI], IMAGE_SIZES[PHI]),
                                        Settings.settings_num_classes()).generate(),
                 steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-                initial_epoch=0,
-                epochs=1,
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
                 verbose=2,
                 callbacks=c_callback)
 
 elif MODE == 'SSD':
+    with tf.device('/cpu:0'):
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
+        random.shuffle(train_image)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
+        Image_Processing.extraction_label(train_image + validation_image + test_image)
+        train_label = Image_Processing.extraction_label(train_image)
+        validation_label = Image_Processing.extraction_label(validation_image)
+
+    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
+
+    model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
+    model.summary()
+    priors = SSD_anchors.get_anchors((IMAGE_HEIGHT, IMAGE_WIDTH))
+    bbox_util = SSD_BBoxUtility(Settings.settings(), priors)
     for _ in range(EPOCHS):
-        with tf.device('/cpu:0'):
-            train_image = Image_Processing.extraction_image(TRAIN_PATH)
-            random.shuffle(train_image)
-            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-            test_image = Image_Processing.extraction_image(TEST_PATH)
-            Image_Processing.extraction_label(train_image + validation_image + test_image)
-            train_label = Image_Processing.extraction_label(train_image)
-            validation_label = Image_Processing.extraction_label(validation_image)
+        try:
+            logs = pd.read_csv(CSV_PATH)
+            data = logs.iloc[-1]
+            initial_epoch = int(data.get('epoch')) + 1
+        except:
+            initial_epoch = 0
 
-        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
-
-        model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
-        model.summary()
-        priors = SSD_anchors.get_anchors((IMAGE_HEIGHT, IMAGE_WIDTH))
-        bbox_util = SSD_BBoxUtility(Settings.settings(), priors)
         if validation_image:
             model.fit(
                 SSD_Generator(bbox_util, BATCH_SIZE, train_image, train_label,
@@ -11609,8 +11622,8 @@ elif MODE == 'SSD':
                                               Settings.settings()).generate(),
                 validation_steps=max(1, len(validation_image) // BATCH_SIZE),
                 steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-                initial_epoch=0,
-                epochs=1,
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
                 verbose=2,
                 callbacks=c_callback)
         else:
@@ -11619,8 +11632,8 @@ elif MODE == 'SSD':
                 SSD_Generator(bbox_util, BATCH_SIZE, train_image, train_label,
                               (IMAGE_HEIGHT, IMAGE_WIDTH), Settings.settings()).generate(),
                 steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-                initial_epoch=0,
-                epochs=1,
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
                 verbose=2,
                 callbacks=c_callback)
 
