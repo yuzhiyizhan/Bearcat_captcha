@@ -11541,22 +11541,23 @@ if MODE == 'YOLO' or MODE == 'YOLO_TINY':
 
 
 elif MODE == 'EFFICIENTDET':
-    with tf.device('/cpu:0'):
-        train_image = Image_Processing.extraction_image(TRAIN_PATH)
-        random.shuffle(train_image)
-        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-        test_image = Image_Processing.extraction_image(TEST_PATH)
-        Image_Processing.extraction_label(train_image + validation_image + test_image)
-        train_label = Image_Processing.extraction_label(train_image)
-        validation_label = Image_Processing.extraction_label(validation_image)
 
-    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
-
-    model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
-    model.summary()
-    priors = Efficientdet_anchors.get_anchors(IMAGE_SIZES[PHI])
-    bbox_util = EfficientDet_BBoxUtility(Settings.settings_num_classes(), priors)
     for _ in range(EPOCHS):
+        with tf.device('/cpu:0'):
+            train_image = Image_Processing.extraction_image(TRAIN_PATH)
+            random.shuffle(train_image)
+            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+            test_image = Image_Processing.extraction_image(TEST_PATH)
+            Image_Processing.extraction_label(train_image + validation_image + test_image)
+            train_label = Image_Processing.extraction_label(train_image)
+            validation_label = Image_Processing.extraction_label(validation_image)
+
+        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
+
+        model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
+        model.summary()
+        priors = Efficientdet_anchors.get_anchors(IMAGE_SIZES[PHI])
+        bbox_util = EfficientDet_BBoxUtility(Settings.settings_num_classes(), priors)
         try:
             logs = pd.read_csv(CSV_PATH)
             data = logs.iloc[-1]
