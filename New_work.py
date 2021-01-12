@@ -1,4 +1,6 @@
 import os
+import re
+import shutil
 
 
 def callback(work_path, project_name):
@@ -37,11 +39,14 @@ class CallBack(object):
     def calculate_the_best_weight(self):
         if os.listdir(CHECKPOINT_PATH):
             value = Image_Processing.extraction_image(CHECKPOINT_PATH)
-            extract_num = [os.path.splitext(os.path.split(i)[-1])[0] for i in value]
-            num = [re.split('-', i) for i in extract_num]
-            losses = [float('-' + str(abs(float(i[2])))) for i in num]
-            model_dict = dict((ind, val) for ind, val in zip(losses, value))
-            return model_dict.get(max(losses))
+            try:
+                extract_num = [os.path.splitext(os.path.split(i)[-1])[0] for i in value]
+                num = [re.split('-', i) for i in extract_num]
+                losses = [float('-' + str(abs(float(i[2])))) for i in num]
+                model_dict = dict((ind, val) for ind, val in zip(losses, value))
+                return model_dict.get(max(losses))
+            except IndexError as e:
+                return value[0]
         else:
             logger.debug('没有可用的检查点')
 
@@ -195,6 +200,7 @@ class WarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
 if __name__ == '__main__':
     logger.debug(CallBack.calculate_the_best_weight())
 
+
 """
 
 
@@ -344,6 +350,8 @@ from {work_path}.{project_name}.settings import WEIGHT
 from {work_path}.{project_name}.settings import TRAIN_PATH
 from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import LABEL_PATH
+from {work_path}.{project_name}.settings import INPUT_PATH
+from {work_path}.{project_name}.settings import OUTPUT_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PATH
 from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
@@ -359,7 +367,8 @@ def del_file(path):
 
 
 if __name__ == '__main__':
-    path = [TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH, LABEL_PATH,
+    path = [INPUT_PATH, OUTPUT_PATH, TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH,
+            LABEL_PATH,
             WEIGHT]
     with ThreadPoolExecutor(max_workers=50) as t:
         for i in path:
@@ -2572,16 +2581,16 @@ class Predict_Image(object):
         else:
             raise ValueError(f'还没写{{MODE}}这种预测方法')
 
-    def predict_image(self, image):
+    def predict_image(self, image_path):
         global right_value
         global predicted_value
         start_time = time.time()
         recognition_rate_list = []
         if MODE == 'EFFICIENTDET':
             if self.app:
-                image = Image.fromarray(image)
+                image = Image.fromarray(image_path)
             else:
-                image = Image.open(image)
+                image = Image.open(image_path)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             image_shape = np.array(np.shape(image)[0:2])
@@ -2666,7 +2675,6 @@ class Predict_Image(object):
                 label_size = draw.textsize(label, font)
                 logger.info(label)
                 label = label.encode('utf-8')
-
                 if top - label_size[1] >= 0:
                     text_origin = np.array([left, top - label_size[1]])
                 else:
@@ -2688,9 +2696,9 @@ class Predict_Image(object):
 
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
             if self.app:
-                image = Image.fromarray(image)
+                image = Image.fromarray(image_path)
             else:
-                image = Image.open(image)
+                image = Image.open(image_path)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             new_image_size = (IMAGE_HEIGHT, IMAGE_WIDTH)
@@ -2757,9 +2765,9 @@ class Predict_Image(object):
 
         elif MODE == 'SSD':
             if self.app:
-                image = Image.fromarray(image)
+                image = Image.fromarray(image_path)
             else:
-                image = Image.open(image)
+                image = Image.open(image_path)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             image_shape = np.array(np.shape(image)[0:2])
@@ -2840,29 +2848,27 @@ class Predict_Image(object):
             logger.info(f'总体置信度为{{round(self.recognition_probability(recognition_rate_list), 2) * 100}}%')
             return image
 
-
-
         else:
             if PRUNING:
                 model = self.model
                 input_details = model.get_input_details()
                 output_details = model.get_output_details()
-                image_object = self.decode_image(image)
+                image_object = self.decode_image(image_path)
                 model.set_tensor(input_details[0]['index'], image_object)
                 model.invoke()
                 vertor = model.get_tensor(output_details[0]['index'])
             else:
                 model = self.model
-                image_object = self.decode_image(image)
+                image_object = self.decode_image(image_path)
                 vertor = model.predict(image_object)
             text, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
-            right_text = self.decode_label(image)
+            right_text = self.decode_label(image_path)
             logger.info(f'预测为{{text}},真实为{{right_text}}') if text == right_text else logger.error(
                 f'预测为{{text}},真实为{{right_text}}')
             logger.info(f'识别率为:{{recognition_rate * 100}}%') if recognition_rate > 0.7 else logger.error(
                 f'识别率为:{{recognition_rate * 100}}%')
             if str(text) != str(right_text):
-                logger.error(f'预测失败的图片路径为:{{image}}')
+                logger.error(f'预测失败的图片路径为:{{image_path}}')
                 right_value = right_value + 1
                 logger.info(f'正确率:{{(predicted_value / right_value) * 100}}%')
                 if predicted_value > 0:
@@ -3091,6 +3097,7 @@ def MD5(str_input):
     m5.update(str(str_input).encode('utf-8'))
     str_input = m5.hexdigest()
     return str_input
+
 """
 
 
@@ -3163,8 +3170,13 @@ import os
 import shutil
 from loguru import logger
 from {work_path}.{project_name}.settings import WEIGHT
+from {work_path}.{project_name}.settings import GT_PATH
+from {work_path}.{project_name}.settings import DR_PATH
+from {work_path}.{project_name}.settings import IMG_PATH
+from {work_path}.{project_name}.settings import INPUT_PATH
 from {work_path}.{project_name}.settings import BASIC_PATH
 from {work_path}.{project_name}.settings import TRAIN_PATH
+from {work_path}.{project_name}.settings import OUTPUT_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
 from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
@@ -3176,10 +3188,10 @@ from {work_path}.{project_name}.settings import CHECKPOINT_PATH
 
 
 def chrak_path():
-    paths = [TEST_PATH, TRAIN_PATH, VALIDATION_PATH, TRAIN_PACK_PATH,
+    paths = [INPUT_PATH, GT_PATH, DR_PATH, IMG_PATH, TEST_PATH, TRAIN_PATH, VALIDATION_PATH, TRAIN_PACK_PATH,
              VALIDATION_PACK_PATH, MODEL_PATH, os.path.join(BASIC_PATH, 'logs'),
              os.path.join(BASIC_PATH, 'CSVLogger'), CHECKPOINT_PATH, WEIGHT,
-             LABEL_PATH, APP_MODEL_PATH]
+             LABEL_PATH, APP_MODEL_PATH, OUTPUT_PATH]
     for i in paths:
         if not os.path.exists(i):
             os.mkdir(i)
@@ -3221,20 +3233,20 @@ import xml.etree.ElementTree as ET
 from tensorflow.keras import backend as K
 from adabelief_tf import AdaBeliefOptimizer
 from einops.layers.tensorflow import Rearrange
-from {work_path}.{project_name}.settings import LR
-from {work_path}.{project_name}.settings import PHI
-from {work_path}.{project_name}.settings import MODE
-from {work_path}.{project_name}.settings import WEIGHT
-from {work_path}.{project_name}.settings import MAX_BOXES
-from {work_path}.{project_name}.settings import LABEL_PATH
-from {work_path}.{project_name}.settings import IMAGE_WIDTH
-from {work_path}.{project_name}.settings import IMAGE_SIZES
-from {work_path}.{project_name}.settings import ANCHORS_PATH
-from {work_path}.{project_name}.settings import NUMBER_CLASSES_FILE
-from {work_path}.{project_name}.settings import IMAGE_HEIGHT
-from {work_path}.{project_name}.settings import CAPTCHA_LENGTH
-from {work_path}.{project_name}.settings import IMAGE_CHANNALS
-from {work_path}.{project_name}.settings import LABEL_SMOOTHING
+from {work_path}.{project_name}_coco.settings import LR
+from {work_path}.{project_name}_coco.settings import PHI
+from {work_path}.{project_name}_coco.settings import MODE
+from {work_path}.{project_name}_coco.settings import WEIGHT
+from {work_path}.{project_name}_coco.settings import MAX_BOXES
+from {work_path}.{project_name}_coco.settings import LABEL_PATH
+from {work_path}.{project_name}_coco.settings import IMAGE_WIDTH
+from {work_path}.{project_name}_coco.settings import IMAGE_SIZES
+from {work_path}.{project_name}_coco.settings import ANCHORS_PATH
+from {work_path}.{project_name}_coco.settings import NUMBER_CLASSES_FILE
+from {work_path}.{project_name}_coco.settings import IMAGE_HEIGHT
+from {work_path}.{project_name}_coco.settings import CAPTCHA_LENGTH
+from {work_path}.{project_name}_coco.settings import IMAGE_CHANNALS
+from {work_path}.{project_name}_coco.settings import LABEL_SMOOTHING
 
 inputs_shape = (IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNALS)
 BlockArgs = collections.namedtuple('BlockArgs', [
@@ -8273,6 +8285,99 @@ class Model_Structure(object):
         x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
         return x
 
+    @staticmethod
+    def rfb_conv2d_bn(x, filters, num_row, num_col, padding='same', stride=1, dilation_rate=1, relu=True):
+        x = tf.keras.layers.Conv2D(
+            filters, (num_row, num_col),
+            strides=(stride, stride),
+            padding=padding,
+            dilation_rate=(dilation_rate, dilation_rate),
+            use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization(scale=False)(x)
+        if relu:
+            x = tf.keras.layers.Activation("relu")(x)
+        return x
+
+    @staticmethod
+    def rfb_basic(x, input_filters, output_filters, stride=1, map_reduce=8):
+        input_filters_div = input_filters // map_reduce
+
+        branch_0 = Model_Structure.rfb_conv2d_bn(x, input_filters_div * 2, 1, 1, stride=stride)
+        branch_0 = Model_Structure.rfb_conv2d_bn(branch_0, input_filters_div * 2, 3, 3, relu=False)
+
+        branch_1 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_1 = Model_Structure.rfb_conv2d_bn(branch_1, input_filters_div * 2, 3, 3, stride=stride)
+        branch_1 = Model_Structure.rfb_conv2d_bn(branch_1, input_filters_div * 2, 3, 3, dilation_rate=3, relu=False)
+
+        branch_2 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_2 = Model_Structure.rfb_conv2d_bn(branch_2, (input_filters_div // 2) * 3, 3, 3)
+        branch_2 = Model_Structure.rfb_conv2d_bn(branch_2, input_filters_div * 2, 3, 3, stride=stride)
+        branch_2 = Model_Structure.rfb_conv2d_bn(branch_2, input_filters_div * 2, 3, 3, dilation_rate=5, relu=False)
+
+        branch_3 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_3 = Model_Structure.rfb_conv2d_bn(branch_3, (input_filters_div // 2) * 3, 1, 7)
+        branch_3 = Model_Structure.rfb_conv2d_bn(branch_3, input_filters_div * 2, 7, 1, stride=stride)
+        branch_3 = Model_Structure.rfb_conv2d_bn(branch_3, input_filters_div * 2, 3, 3, dilation_rate=7, relu=False)
+
+        out = tf.keras.layers.concatenate([branch_0, branch_1, branch_2, branch_3], axis=-1)
+        out = Model_Structure.rfb_conv2d_bn(out, output_filters, 1, 1, relu=False)
+
+        short = Model_Structure.rfb_conv2d_bn(x, output_filters, 1, 1, stride=stride, relu=False)
+        out = tf.keras.layers.Lambda(lambda x: x[0] + x[1])([out, short])
+        out = tf.keras.layers.Activation("relu")(out)
+        return out
+
+    @staticmethod
+    def rfb_basic_a(x, input_filters, output_filters, stride=1, map_reduce=8):
+        input_filters_div = input_filters // map_reduce
+
+        branch_0 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1, stride=stride)
+        branch_0 = Model_Structure.rfb_conv2d_bn(branch_0, input_filters_div, 3, 3, relu=False)
+
+        branch_1 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_1 = Model_Structure.rfb_conv2d_bn(branch_1, input_filters_div, 3, 1)
+        branch_1 = Model_Structure.rfb_conv2d_bn(branch_1, input_filters_div, 3, 3, dilation_rate=3, relu=False)
+
+        branch_2 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_2 = Model_Structure.rfb_conv2d_bn(branch_2, input_filters_div, 1, 3)
+        branch_2 = Model_Structure.rfb_conv2d_bn(branch_2, input_filters_div, 3, 3, dilation_rate=3, relu=False)
+
+        branch_3 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_3 = Model_Structure.rfb_conv2d_bn(branch_3, input_filters_div, 3, 1)
+        branch_3 = Model_Structure.rfb_conv2d_bn(branch_3, input_filters_div, 3, 3, dilation_rate=5, relu=False)
+
+        branch_4 = Model_Structure.rfb_conv2d_bn(x, input_filters_div, 1, 1)
+        branch_4 = Model_Structure.rfb_conv2d_bn(branch_4, input_filters_div, 1, 3)
+        branch_4 = Model_Structure.rfb_conv2d_bn(branch_4, input_filters_div, 3, 3, dilation_rate=5, relu=False)
+
+        branch_5 = Model_Structure.rfb_conv2d_bn(x, input_filters_div // 2, 1, 1)
+        branch_5 = Model_Structure.rfb_conv2d_bn(branch_5, (input_filters_div // 4) * 3, 1, 3)
+        branch_5 = Model_Structure.rfb_conv2d_bn(branch_5, input_filters_div, 3, 1, stride=stride)
+        branch_5 = Model_Structure.rfb_conv2d_bn(branch_5, input_filters_div, 3, 3, dilation_rate=7, relu=False)
+
+        branch_6 = Model_Structure.rfb_conv2d_bn(x, input_filters_div // 2, 1, 1)
+        branch_6 = Model_Structure.rfb_conv2d_bn(branch_6, (input_filters_div // 4) * 3, 3, 1)
+        branch_6 = Model_Structure.rfb_conv2d_bn(branch_6, input_filters_div, 1, 3, stride=stride)
+        branch_6 = Model_Structure.rfb_conv2d_bn(branch_6, input_filters_div, 3, 3, dilation_rate=7, relu=False)
+
+        out = tf.keras.layers.concatenate([branch_0, branch_1, branch_2, branch_3, branch_4, branch_5, branch_6],
+                                          axis=-1)
+        out = Model_Structure.rfb_conv2d_bn(out, output_filters, 1, 1, relu=False)
+
+        short = Model_Structure.rfb_conv2d_bn(x, output_filters, 1, 1, stride=stride, relu=False)
+        out = tf.keras.layers.Lambda(lambda x: x[0] + x[1])([out, short])
+        out = tf.keras.layers.Activation("relu")(out)
+        return out
+
+    @staticmethod
+    def rfb_normalize(x_38_38_512, x_19_19_1024):
+        branch_0 = Model_Structure.rfb_conv2d_bn(x_38_38_512, 256, 1, 1)
+        branch_1 = Model_Structure.rfb_conv2d_bn(x_19_19_1024, 256, 1, 1)
+        branch_1 = tf.keras.layers.UpSampling2D()(branch_1)
+        out = tf.keras.layers.concatenate([branch_0, branch_1], axis=-1)
+        out = Model_Structure.rfb_basic_a(out, 512, 512)
+        return out
+
 
 class Get_Model(object):
     # DenseNet
@@ -10005,19 +10110,21 @@ class Get_Model(object):
 
     # ShuffleDetV2
     @staticmethod
-    def ShuffleDetV2(inputs, channel_scale=(24, 40, 112, 320), training=None, **kwargs):
+    def ShuffleDetV2(inputs, channel_scale=(48, 96, 192, 1024), training=None, **kwargs):
         x = tf.keras.layers.Conv2D(filters=16, kernel_size=(3, 3), strides=2, padding="same")(inputs)
         x = tf.keras.layers.BatchNormalization()(x, training)
-        x_256_256_16 = tf.nn.swish(x)
-        x_128_128_24 = Model_Structure.shufflenet_v2_make_layer(x_256_256_16, repeat_num=4, in_channels=16,
-                                                                out_channels=channel_scale[0])
+        x_256_256_16 = tf.nn.relu(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x_256_256_16, repeat_num=4, in_channels=16,
+                                                     out_channels=channel_scale[0])
 
-        x_64_64_40 = Model_Structure.shufflenet_v2_make_layer(x_128_128_24, repeat_num=8, in_channels=channel_scale[0],
-                                                              out_channels=channel_scale[1])
+        x_128_128_24 = tf.keras.layers.Conv2D(filters=24, kernel_size=(3, 3), strides=1, padding="same")(x)
 
-        x_32_32_112 = Model_Structure.shufflenet_v2_make_layer(x_64_64_40, repeat_num=4, in_channels=channel_scale[1],
-                                                               out_channels=channel_scale[2])
-
+        x = Model_Structure.shufflenet_v2_make_layer(x_128_128_24, repeat_num=8, in_channels=channel_scale[0],
+                                                     out_channels=channel_scale[1])
+        x_64_64_40 = tf.keras.layers.Conv2D(filters=40, kernel_size=(3, 3), strides=1, padding="same")(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x_64_64_40, repeat_num=4, in_channels=channel_scale[1],
+                                                     out_channels=channel_scale[2])
+        x_32_32_112 = tf.keras.layers.Conv2D(filters=112, kernel_size=(3, 3), strides=1, padding="same")(x)
         x = tf.keras.layers.Conv2D(filters=channel_scale[3], kernel_size=(1, 1), strides=1, padding="same")(x_32_32_112)
 
         x = tf.keras.layers.BatchNormalization()(x, training)
@@ -10049,262 +10156,11 @@ class Get_Model(object):
             x, filters=320, alpha=1, stride=1, expansion=1, block_id=6)
         return x_256_256_16, x_128_128_24, x_64_64_40, x_32_32_112, x_16_16_320
 
-    # SSD
-    # @staticmethod
-    # def SSD300(inputs, num_classes=21):
-    #     # 300,300,3
-    #     # input_tensor = tf.keras.layers.Input(shape=input_shape)
-    #     img_size = (IMAGE_WIDTH, IMAGE_HEIGHT)
-    #
-    #     # SSD结构,net字典
-    #     net = Model_Structure.VGG16(inputs)
-    #     # -----------------------将提取到的主干特征进行处理---------------------------#
-    #     # 对conv4_3进行处理 38,38,512
-    #     net['conv4_3_norm'] = tf.keras.layers.BatchNormalization(name='conv4_3_norm')(net['conv4_3'])
-    #     num_priors = 4
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     net['conv4_3_norm_mbox_loc'] = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same',
-    #                                                           name='conv4_3_norm_mbox_loc')(net['conv4_3_norm'])
-    #     net['conv4_3_norm_mbox_loc_flat'] = tf.keras.layers.Flatten(name='conv4_3_norm_mbox_loc_flat')(
-    #         net['conv4_3_norm_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     net['conv4_3_norm_mbox_conf'] = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3),
-    #                                                            padding='same',
-    #                                                            name='conv4_3_norm_mbox_conf')(net['conv4_3_norm'])
-    #     net['conv4_3_norm_mbox_conf_flat'] = tf.keras.layers.Flatten(name='conv4_3_norm_mbox_conf_flat')(
-    #         net['conv4_3_norm_mbox_conf'])
-    #     priorbox = PriorBox(img_size, 30.0, max_size=60.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='conv4_3_norm_mbox_priorbox')
-    #     net['conv4_3_norm_mbox_priorbox'] = priorbox(net['conv4_3_norm'])
-    #
-    #     # 对fc7层进行处理
-    #     num_priors = 6
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     net['fc7_mbox_loc'] = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same',
-    #                                                  name='fc7_mbox_loc')(
-    #         net['fc7'])
-    #     net['fc7_mbox_loc_flat'] = tf.keras.layers.Flatten(name='fc7_mbox_loc_flat')(net['fc7_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     net['fc7_mbox_conf'] = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same',
-    #                                                   name='fc7_mbox_conf')(
-    #         net['fc7'])
-    #     net['fc7_mbox_conf_flat'] = tf.keras.layers.Flatten(name='fc7_mbox_conf_flat')(net['fc7_mbox_conf'])
-    #
-    #     priorbox = PriorBox(img_size, 60.0, max_size=111.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='fc7_mbox_priorbox')
-    #     net['fc7_mbox_priorbox'] = priorbox(net['fc7'])
-    #
-    #     # 对conv6_2进行处理
-    #     num_priors = 6
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same', name='conv6_2_mbox_loc')(
-    #         net['conv6_2'])
-    #     net['conv6_2_mbox_loc'] = x
-    #     net['conv6_2_mbox_loc_flat'] = tf.keras.layers.Flatten(name='conv6_2_mbox_loc_flat')(net['conv6_2_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same',
-    #                                name='conv6_2_mbox_conf')(
-    #         net['conv6_2'])
-    #     net['conv6_2_mbox_conf'] = x
-    #     net['conv6_2_mbox_conf_flat'] = tf.keras.layers.Flatten(name='conv6_2_mbox_conf_flat')(net['conv6_2_mbox_conf'])
-    #
-    #     priorbox = PriorBox(img_size, 111.0, max_size=162.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='conv6_2_mbox_priorbox')
-    #     net['conv6_2_mbox_priorbox'] = priorbox(net['conv6_2'])
-    #
-    #     # 对conv7_2进行处理
-    #     num_priors = 6
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same', name='conv7_2_mbox_loc')(
-    #         net['conv7_2'])
-    #     net['conv7_2_mbox_loc'] = x
-    #     net['conv7_2_mbox_loc_flat'] = tf.keras.layers.Flatten(name='conv7_2_mbox_loc_flat')(net['conv7_2_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same',
-    #                                name='conv7_2_mbox_conf')(
-    #         net['conv7_2'])
-    #     net['conv7_2_mbox_conf'] = x
-    #     net['conv7_2_mbox_conf_flat'] = tf.keras.layers.Flatten(name='conv7_2_mbox_conf_flat')(net['conv7_2_mbox_conf'])
-    #
-    #     priorbox = PriorBox(img_size, 162.0, max_size=213.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='conv7_2_mbox_priorbox')
-    #     net['conv7_2_mbox_priorbox'] = priorbox(net['conv7_2'])
-    #
-    #     # 对conv8_2进行处理
-    #     num_priors = 4
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same', name='conv8_2_mbox_loc')(
-    #         net['conv8_2'])
-    #     net['conv8_2_mbox_loc'] = x
-    #     net['conv8_2_mbox_loc_flat'] = tf.keras.layers.Flatten(name='conv8_2_mbox_loc_flat')(net['conv8_2_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same',
-    #                                name='conv8_2_mbox_conf')(
-    #         net['conv8_2'])
-    #     net['conv8_2_mbox_conf'] = x
-    #     net['conv8_2_mbox_conf_flat'] = tf.keras.layers.Flatten(name='conv8_2_mbox_conf_flat')(net['conv8_2_mbox_conf'])
-    #
-    #     priorbox = PriorBox(img_size, 213.0, max_size=264.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='conv8_2_mbox_priorbox')
-    #     net['conv8_2_mbox_priorbox'] = priorbox(net['conv8_2'])
-    #
-    #     # 对conv9_2进行处理
-    #     num_priors = 4
-    #     # 预测框的处理
-    #     # num_priors表示每个网格点先验框的数量，4是x,y,h,w的调整
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same', name='conv9_2_mbox_loc')(
-    #         net['conv9_2'])
-    #     net['conv9_2_mbox_loc'] = x
-    #     net['conv9_2_mbox_loc_flat'] = tf.keras.layers.Flatten(name='conv9_2_mbox_loc_flat')(net['conv9_2_mbox_loc'])
-    #     # num_priors表示每个网格点先验框的数量，num_classes是所分的类
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same',
-    #                                name='conv9_2_mbox_conf')(
-    #         net['conv9_2'])
-    #     net['conv9_2_mbox_conf'] = x
-    #     net['conv9_2_mbox_conf_flat'] = tf.keras.layers.Flatten(name='conv9_2_mbox_conf_flat')(net['conv9_2_mbox_conf'])
-    #
-    #     priorbox = PriorBox(img_size, 264.0, max_size=315.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2],
-    #                         name='conv9_2_mbox_priorbox')
-    #
-    #     net['conv9_2_mbox_priorbox'] = priorbox(net['conv9_2'])
-    #
-    #     # 将所有结果进行堆叠
-    #     net['mbox_loc'] = tf.keras.layers.Concatenate(axis=1, name='mbox_loc')([net['conv4_3_norm_mbox_loc_flat'],
-    #                                                                             net['fc7_mbox_loc_flat'],
-    #                                                                             net['conv6_2_mbox_loc_flat'],
-    #                                                                             net['conv7_2_mbox_loc_flat'],
-    #                                                                             net['conv8_2_mbox_loc_flat'],
-    #                                                                             net['conv9_2_mbox_loc_flat']])
-    #
-    #     net['mbox_conf'] = tf.keras.layers.Concatenate(axis=1, name='mbox_conf')([net['conv4_3_norm_mbox_conf_flat'],
-    #                                                                               net['fc7_mbox_conf_flat'],
-    #                                                                               net['conv6_2_mbox_conf_flat'],
-    #                                                                               net['conv7_2_mbox_conf_flat'],
-    #                                                                               net['conv8_2_mbox_conf_flat'],
-    #                                                                               net['conv9_2_mbox_conf_flat']])
-    #
-    #     net['mbox_priorbox'] = tf.keras.layers.Concatenate(axis=1, name='mbox_priorbox')(
-    #         [net['conv4_3_norm_mbox_priorbox'],
-    #          net['fc7_mbox_priorbox'],
-    #          net['conv6_2_mbox_priorbox'],
-    #          net['conv7_2_mbox_priorbox'],
-    #          net['conv8_2_mbox_priorbox'],
-    #          net['conv9_2_mbox_priorbox']])
-    #
-    #     # 8732,4
-    #     net['mbox_loc'] = tf.keras.layers.Reshape((-1, 4), name='mbox_loc_final')(net['mbox_loc'])
-    #     # 8732,21
-    #     net['mbox_conf'] = tf.keras.layers.Reshape((-1, num_classes), name='mbox_conf_logits')(net['mbox_conf'])
-    #     net['mbox_conf'] = tf.keras.layers.Activation('softmax', name='mbox_conf_final')(net['mbox_conf'])
-    #
-    #     net['predictions'] = tf.keras.layers.Concatenate(axis=2, name='predictions')([net['mbox_loc'],
-    #                                                                                   net['mbox_conf'],
-    #                                                                                   net['mbox_priorbox']])
-    #
-    #     model = tf.keras.Model(net['input'], net['predictions'])
-    #     return model
-
-    # @staticmethod
-    # def SSD300(inputs):
-    #     x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256 = Model_Structure.SSD_VGG16(inputs)
-    #     img_size = (IMAGE_WIDTH, IMAGE_HEIGHT)
-    #     num_classes = Settings.settings()
-    #     num_priors = 4
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(x_38_38_512)
-    #     conv4_3_norm_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3),
-    #                                padding='same')(x_38_38_512)
-    #     conv4_3_norm_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #
-    #     priorbox = PriorBox(img_size, 30.0, max_size=60.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     conv4_3_norm_mbox_priorbox = priorbox(x_38_38_512)
-    #     num_priors = 6
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(x_19_19_1024)
-    #     fc7_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same')(x_19_19_1024)
-    #     fc7_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #     priorbox = PriorBox(img_size, 60.0, max_size=111.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     fc7_mbox_priorbox = priorbox(x_19_19_1024)
-    #     num_priors = 6
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(x_10_10_512)
-    #
-    #     conv6_2_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same')(x_10_10_512)
-    #
-    #     conv6_2_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #     priorbox = PriorBox(img_size, 111.0, max_size=162.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     conv6_2_mbox_priorbox = priorbox(x_10_10_512)
-    #     num_priors = 6
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(
-    #         x_5_5_256)
-    #     conv7_2_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same')(x_5_5_256)
-    #     conv7_2_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #     priorbox = PriorBox(img_size, 162.0, max_size=213.0, aspect_ratios=[2, 3],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     conv7_2_mbox_priorbox = priorbox(x_5_5_256)
-    #     num_priors = 4
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(
-    #         x_3_3_256)
-    #     conv8_2_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same')(x_3_3_256)
-    #     conv8_2_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #     priorbox = PriorBox(img_size, 213.0, max_size=264.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     conv8_2_mbox_priorbox = priorbox(x_3_3_256)
-    #     num_priors = 4
-    #     x = tf.keras.layers.Conv2D(num_priors * 4, kernel_size=(3, 3), padding='same')(
-    #         x_1_1_256)
-    #
-    #     conv9_2_mbox_loc_flat = tf.keras.layers.Flatten()(x)
-    #     x = tf.keras.layers.Conv2D(num_priors * num_classes, kernel_size=(3, 3), padding='same')(x_1_1_256)
-    #
-    #     conv9_2_mbox_conf_flat = tf.keras.layers.Flatten()(x)
-    #     priorbox = PriorBox(img_size, 264.0, max_size=315.0, aspect_ratios=[2],
-    #                         variances=[0.1, 0.1, 0.2, 0.2])
-    #     conv9_2_mbox_priorbox = priorbox(x_1_1_256)
-    #
-    #     mbox_loc = tf.keras.layers.Concatenate(axis=1)(
-    #         [conv4_3_norm_mbox_loc_flat, fc7_mbox_loc_flat, conv6_2_mbox_loc_flat, conv7_2_mbox_loc_flat,
-    #          conv8_2_mbox_loc_flat, conv9_2_mbox_loc_flat])
-    #     mbox_conf = tf.keras.layers.Concatenate(axis=1)([conv4_3_norm_mbox_conf_flat,
-    #                                                      fc7_mbox_conf_flat,
-    #                                                      conv6_2_mbox_conf_flat,
-    #                                                      conv7_2_mbox_conf_flat,
-    #                                                      conv8_2_mbox_conf_flat,
-    #                                                      conv9_2_mbox_conf_flat])
-    #     mbox_priorbox = tf.keras.layers.Concatenate(axis=1)([conv4_3_norm_mbox_priorbox,
-    #                                                          fc7_mbox_priorbox,
-    #                                                          conv6_2_mbox_priorbox,
-    #                                                          conv7_2_mbox_priorbox,
-    #                                                          conv8_2_mbox_priorbox,
-    #                                                          conv9_2_mbox_priorbox])
-    #     mbox_loc = tf.keras.layers.Reshape((-1, 4))(mbox_loc)
-    #     mbox_conf = tf.keras.layers.Reshape((-1, num_classes))(mbox_conf)
-    #     mbox_conf = tf.keras.layers.Activation('softmax')(mbox_conf)
-    #     predictions = tf.keras.layers.Concatenate(axis=2)([mbox_loc, mbox_conf, mbox_priorbox])
-    #     model = tf.keras.Model(inputs=inputs, outputs=predictions)
-    #     return model
     @staticmethod
-    def SSD_VGG16(x):
+    def SSD_VGG16(inputs, **kwargs):
         x = tf.keras.layers.Conv2D(64, kernel_size=(3, 3),
                                    activation='relu',
-                                   padding='same', name='conv1_1')(x)
+                                   padding='same', name='conv1_1')(inputs)
         x = tf.keras.layers.Conv2D(64, kernel_size=(3, 3),
                                    activation='relu',
                                    padding='same', name='conv1_2')(x)
@@ -10372,12 +10228,37 @@ class Get_Model(object):
         return x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
 
     @staticmethod
-    def SSD_MobileNetV2(x, alpha=1, depth_multiplier=1):
+    def SSD_ShuffleNet(inputs, channel_scale=(48, 96, 192, 1024), training=None, **kwargs):
+        x = tf.keras.layers.Conv2D(filters=16, kernel_size=(3, 3), strides=2, padding="same")(inputs)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x = tf.nn.relu(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=4, in_channels=16,
+                                                     out_channels=channel_scale[0])
+        x = tf.keras.layers.Conv2D(filters=24, kernel_size=(3, 3), strides=1, padding="same")(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=8, in_channels=channel_scale[0],
+                                                     out_channels=channel_scale[1])
+        x_38_38_512 = tf.keras.layers.Conv2D(filters=512, kernel_size=(3, 3), strides=1, padding="same")(x)
+        x = Model_Structure.shufflenet_v2_make_layer(x_38_38_512, repeat_num=4, in_channels=channel_scale[1],
+                                                     out_channels=channel_scale[2])
+        x_19_19_1024 = tf.keras.layers.Conv2D(filters=1024, kernel_size=(3, 3), strides=1, padding="same")(x)
+        x = tf.keras.layers.Conv2D(filters=channel_scale[3], kernel_size=(1, 1), strides=1, padding="same")(
+            x_19_19_1024)
+        x = tf.keras.layers.BatchNormalization()(x, training)
+        x_10_10_512 = Model_Structure.shufflenet_v2_make_layer(x, repeat_num=1, in_channels=256, out_channels=512)
+        x_5_5_256 = Model_Structure.shufflenet_v2_make_layer(x_10_10_512, repeat_num=1, in_channels=128,
+                                                             out_channels=256)
+        x_3_3_256 = Model_Structure.shufflenet_v2_make_layer(x_5_5_256, repeat_num=1, in_channels=128, out_channels=256)
+        x = Model_Structure.shufflenet_v2_make_layer(x_3_3_256, repeat_num=1, in_channels=128, out_channels=256)
+        x_1_1_256 = tf.keras.layers.MaxPooling2D()(x)
+        return x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
+
+    @staticmethod
+    def SSD_MobileNetV2(inputs, alpha=1, **kwargs):
         channel_axis = 1 if tf.keras.backend.image_data_format() == 'channels_first' else -1
         first_block_filters = Model_Structure.mobilenet_v2_make_divisible(32 * alpha, 8)
         x = tf.keras.layers.ZeroPadding2D(
-            padding=tf.python.keras.applications.imagenet_utils.correct_pad(x, 3),
-            name='Conv1_pad')(x)
+            padding=tf.python.keras.applications.imagenet_utils.correct_pad(inputs, 3),
+            name='Conv1_pad')(inputs)
         x = tf.keras.layers.Conv2D(
             first_block_filters,
             kernel_size=3,
@@ -10606,7 +10487,7 @@ class Models(object):
         # shape = (None, 16, 16, 320)
         # dtype = float32 >]
 
-        x = Get_Model.EfficientDet(*backbones[PHI])
+        # x = Get_Model.EfficientDet(*backbones[PHI])
         # x = Get_Model.MobileDetV2(inputs)
         # x = Get_Model.MobileDetV3Small(inputs)
         # x = Get_Model.GhostDet(inputs)
@@ -10770,6 +10651,7 @@ class Models(object):
     def captcha_model_ssd():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
         x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256 = Get_Model.SSD_VGG16(inputs)
+
         img_size = (IMAGE_WIDTH, IMAGE_HEIGHT)
         num_classes = Settings.settings()
         x = Normalize(20, name='conv4_3_norm')(x_38_38_512)
@@ -11005,8 +10887,10 @@ class Models(object):
 # MobileNetV2
 # x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256 = Get_Model.SSD_MobileNetV2(inputs)
 
-## EfficientDet
+# SSD_ShuffleNet
+# x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256 = Get_Model.SSD_ShuffleNet(inputs)
 
+## EfficientDet
 # EfficientDet
 # x = Get_Model.EfficientDet(*backbones[PHI])
 
@@ -11019,8 +10903,17 @@ class Models(object):
 # GhostDet
 # x = Get_Model.GhostDet(inputs)
 
+
 # ShuffleDetV2
-# x = Get_Model.ShuffleDetV2(inputs)
+# ShuffleNet_0_5x
+# x = Get_Model.ShuffleDetV2(inputs, channel_scale=[48, 96, 192, 1024])
+# ShuffleNet_1_0x
+# x = Get_Model.ShuffleDetV2(inputs, channel_scale=[116, 232, 464, 1024])
+# ShuffleNet_1_5x
+# x = Get_Model.ShuffleDetV2(inputs, channel_scale=[176, 352, 704, 1024])
+# ShuffleNet_2_0x
+# x = Get_Model.ShuffleDetV2(inputs, channel_scale=[244, 488, 976, 2048])
+
 
 # Densenet_121
 # x = Get_Model.DenseDet(inputs, block=[6, 12, 24, 16])
@@ -11037,7 +10930,7 @@ class Models(object):
 
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
-        model = Models.captcha_model_efficientdet()
+        model = Models.captcha_model()
         model.summary()
         # for i, n in enumerate(model.layers):
         #     logger.debug(f'{{i}} {{n.name}}')
@@ -11305,6 +11198,17 @@ WEIGHT = os.path.join(BASIC_PATH, 'weight')
 
 # 先验框
 ANCHORS_PATH = os.path.join(BASIC_PATH, 'anchors.json')
+
+# 测试map
+INPUT_PATH = os.path.join(BASIC_PATH, 'inputs')
+
+GT_PATH = os.path.join(INPUT_PATH, 'ground-truth')
+
+DR_PATH = os.path.join(INPUT_PATH, 'detection-results')
+
+IMG_PATH = os.path.join(INPUT_PATH, 'images-optional')
+
+OUTPUT_PATH = os.path.join(BASIC_PATH, 'output')
 
 """
 
@@ -11591,22 +11495,23 @@ elif MODE == 'EFFICIENTDET':
                 callbacks=c_callback)
 
 elif MODE == 'SSD':
-    with tf.device('/cpu:0'):
-        train_image = Image_Processing.extraction_image(TRAIN_PATH)
-        random.shuffle(train_image)
-        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-        test_image = Image_Processing.extraction_image(TEST_PATH)
-        Image_Processing.extraction_label(train_image + validation_image + test_image)
-        train_label = Image_Processing.extraction_label(train_image)
-        validation_label = Image_Processing.extraction_label(validation_image)
 
-    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
-
-    model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
-    model.summary()
-    priors = SSD_anchors.get_anchors((IMAGE_HEIGHT, IMAGE_WIDTH))
-    bbox_util = SSD_BBoxUtility(Settings.settings(), priors)
     for _ in range(EPOCHS):
+        with tf.device('/cpu:0'):
+            train_image = Image_Processing.extraction_image(TRAIN_PATH)
+            random.shuffle(train_image)
+            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+            test_image = Image_Processing.extraction_image(TEST_PATH)
+            Image_Processing.extraction_label(train_image + validation_image + test_image)
+            train_label = Image_Processing.extraction_label(train_image)
+            validation_label = Image_Processing.extraction_label(validation_image)
+
+        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
+
+        model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
+        model.summary()
+        priors = SSD_anchors.get_anchors((IMAGE_HEIGHT, IMAGE_WIDTH))
+        bbox_util = SSD_BBoxUtility(Settings.settings(), priors)
         try:
             logs = pd.read_csv(CSV_PATH)
             data = logs.iloc[-1]
@@ -11773,6 +11678,14 @@ class New_Work(object):
         self.spider_example()
         self.test()
         self.train()
+        with open('map_example.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        work_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.work_parh, self.project_name,
+                                 'test_map.py')
+
+        with open(work_path, 'w', encoding='utf-8') as f:
+            f.write(re.sub('simples', self.project_name, re.sub('works', self.work_parh, content)))
 
 
 if __name__ == '__main__':
