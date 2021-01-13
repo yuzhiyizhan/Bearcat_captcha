@@ -3233,20 +3233,20 @@ import xml.etree.ElementTree as ET
 from tensorflow.keras import backend as K
 from adabelief_tf import AdaBeliefOptimizer
 from einops.layers.tensorflow import Rearrange
-from {work_path}.{project_name}_coco.settings import LR
-from {work_path}.{project_name}_coco.settings import PHI
-from {work_path}.{project_name}_coco.settings import MODE
-from {work_path}.{project_name}_coco.settings import WEIGHT
-from {work_path}.{project_name}_coco.settings import MAX_BOXES
-from {work_path}.{project_name}_coco.settings import LABEL_PATH
-from {work_path}.{project_name}_coco.settings import IMAGE_WIDTH
-from {work_path}.{project_name}_coco.settings import IMAGE_SIZES
-from {work_path}.{project_name}_coco.settings import ANCHORS_PATH
-from {work_path}.{project_name}_coco.settings import NUMBER_CLASSES_FILE
-from {work_path}.{project_name}_coco.settings import IMAGE_HEIGHT
-from {work_path}.{project_name}_coco.settings import CAPTCHA_LENGTH
-from {work_path}.{project_name}_coco.settings import IMAGE_CHANNALS
-from {work_path}.{project_name}_coco.settings import LABEL_SMOOTHING
+from {work_path}.{project_name}.settings import LR
+from {work_path}.{project_name}.settings import PHI
+from {work_path}.{project_name}.settings import MODE
+from {work_path}.{project_name}.settings import WEIGHT
+from {work_path}.{project_name}.settings import MAX_BOXES
+from {work_path}.{project_name}.settings import LABEL_PATH
+from {work_path}.{project_name}.settings import IMAGE_WIDTH
+from {work_path}.{project_name}.settings import IMAGE_SIZES
+from {work_path}.{project_name}.settings import ANCHORS_PATH
+from {work_path}.{project_name}.settings import NUMBER_CLASSES_FILE
+from {work_path}.{project_name}.settings import IMAGE_HEIGHT
+from {work_path}.{project_name}.settings import CAPTCHA_LENGTH
+from {work_path}.{project_name}.settings import IMAGE_CHANNALS
+from {work_path}.{project_name}.settings import LABEL_SMOOTHING
 
 inputs_shape = (IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNALS)
 BlockArgs = collections.namedtuple('BlockArgs', [
