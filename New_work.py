@@ -8242,9 +8242,18 @@ class Model_Structure(object):
         return x
 
     @staticmethod
-    def densedet_dense_block(x, blocks, name):
+    def densedet_dense_block(inputs, blocks, name):
+        # for i in range(blocks):
+        #     x = Model_Structure.densedet_conv_block(x, 32, name=name + '_block' + str(i + 1))
+        # return x
+        features_list = []
+        features_list.append(inputs)
+        x = inputs
         for i in range(blocks):
-            x = Model_Structure.densedet_conv_block(x, 32, name=name + '_block' + str(i + 1))
+            y = Model_Structure.densedet_conv_block(x, growth_rate=32, name=name + '_block' + str(i + 1))
+            features_list.append(y)
+            x = tf.concat(features_list, axis=-1)
+        features_list.clear()
         return x
 
     @staticmethod
@@ -8268,21 +8277,21 @@ class Model_Structure(object):
     @staticmethod
     def densedet_conv_block(x, growth_rate, name):
         bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
-        x1 = tf.keras.layers.BatchNormalization(
+        x = tf.keras.layers.BatchNormalization(
             axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(
             x)
-        x1 = tf.keras.layers.Activation('relu', name=name + '_0_relu')(x1)
-        x1 = tf.keras.layers.Conv2D(
+        x = tf.keras.layers.Activation('relu', name=name + '_0_relu')(x)
+        x = tf.keras.layers.Conv2D(
             4 * growth_rate, 1, padding='same', use_bias=False, name=name + '_1_conv')(
-            x1)
-        x1 = tf.keras.layers.BatchNormalization(
+            x)
+        x = tf.keras.layers.BatchNormalization(
             axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
-            x1)
-        x1 = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x1)
-        x1 = tf.keras.layers.Conv2D(
+            x)
+        x = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x)
+        x = tf.keras.layers.Conv2D(
             growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
-            x1)
-        x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+            x)
+        # x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
         return x
 
     @staticmethod
@@ -8377,6 +8386,59 @@ class Model_Structure(object):
         out = tf.keras.layers.concatenate([branch_0, branch_1], axis=-1)
         out = Model_Structure.rfb_basic_a(out, 512, 512)
         return out
+
+    @staticmethod
+    def densenet_dense_block_b(inputs, blocks, name):
+        # for i in range(blocks):
+        #     x = Model_Structure.densedet_conv_block(x, 32, name=name + '_block' + str(i + 1))
+        # return x
+        features_list = []
+        features_list.append(inputs)
+        x = inputs
+        for i in range(blocks):
+            y = Model_Structure.densenet_conv_block_b(x, growth_rate=32, name=name + '_block' + str(i + 1))
+            features_list.append(y)
+            x = tf.concat(features_list, axis=-1)
+        features_list.clear()
+        return x
+
+    @staticmethod
+    def densenet_transition_block_b(x, reduction, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name=name + '_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            int(tf.keras.backend.int_shape(x)[bn_axis] * reduction),
+            1, padding='same',
+            use_bias=False,
+            name=name + '_conv')(
+            x)
+        # x = tf.keras.layers.MaxPooling2D(2, strides=2, name=name + '_pool')(x)
+        x = Model_Structure.mobilenet_v2_inverted_res_block(x, filters=int(
+            tf.keras.backend.int_shape(x)[bn_axis] * reduction), alpha=1, stride=2, expansion=1, block_id=name + str(0))
+        return x
+
+    @staticmethod
+    def densenet_conv_block_b(x, growth_rate, name):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name=name + '_0_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            4 * growth_rate, 1, padding='same', use_bias=False, name=name + '_1_conv')(
+            x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')(
+            x)
+        x = tf.keras.layers.Activation('relu', name=name + '_1_relu')(x)
+        x = tf.keras.layers.Conv2D(
+            growth_rate, 3, padding='same', use_bias=False, name=name + '_2_conv')(
+            x)
+        # x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
+        return x
 
 
 class Get_Model(object):
@@ -9848,6 +9910,31 @@ class Get_Model(object):
         x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
         return x
 
+    @staticmethod
+    def NB_DenseNet(inputs, block, **kwargs):
+        bn_axis = 3 if tf.keras.backend.image_data_format() == 'channels_last' else 1
+
+        x = tf.keras.layers.ZeroPadding2D(padding=((3, 3), (3, 3)))(inputs)
+        x = tf.keras.layers.Conv2D(64, 7, strides=2, use_bias=False, name='conv1/conv')(x)
+        x = tf.keras.layers.BatchNormalization(
+            axis=bn_axis, epsilon=1.001e-5, name='conv1/bn')(
+            x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='conv1/relu')(x)
+        x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
+
+        x = Model_Structure.densenet_dense_block_b(x, block[0], name='conv2')
+        x = Model_Structure.densenet_transition_block_b(x, 0.5, name='pool2')
+        x = Model_Structure.densenet_dense_block_b(x, block[1], name='conv3')
+        x = Model_Structure.densenet_transition_block_b(x, 0.5, name='pool3')
+        x = Model_Structure.densenet_dense_block_b(x, block[2], name='conv4')
+        x = Model_Structure.densenet_transition_block_b(x, 0.5, name='pool4')
+        x = Model_Structure.densenet_dense_block_b(x, block[3], name='conv5')
+
+        x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
+        x = tf.keras.layers.Activation('Mish_Activation', name='relu')(x)
+        return x
+
     # CRNN
     @staticmethod
     def CRNN(inputs):
@@ -10240,7 +10327,7 @@ class Get_Model(object):
         x_38_38_512 = tf.keras.layers.Conv2D(filters=512, kernel_size=(3, 3), strides=1, padding="same")(x)
         x = Model_Structure.shufflenet_v2_make_layer(x_38_38_512, repeat_num=4, in_channels=channel_scale[1],
                                                      out_channels=channel_scale[2])
-        x_19_19_1024 = tf.keras.layers.Conv2D(filters=1024, kernel_size=(3, 3), strides=1, padding="same")(x)
+        x_19_19_1024 = tf.keras.layers.Conv2D(filters=1024, kernel_size=(1, 1), strides=1, padding="same")(x)
         x = tf.keras.layers.Conv2D(filters=channel_scale[3], kernel_size=(1, 1), strides=1, padding="same")(
             x_19_19_1024)
         x = tf.keras.layers.BatchNormalization()(x, training)
@@ -10359,35 +10446,30 @@ class Get_Model(object):
         x = Model_Structure.densedet_dense_block(x, block[0], name='conv2')
         x = Model_Structure.densedet_transition_block(x, 0.5, name='pool2')
         x = Model_Structure.densedet_dense_block(x, block[1], name='conv3')
-        x_38_38_512 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=512, alpha=1, stride=1, expansion=1, block_id=2)
+        x_38_38_512 = tf.keras.layers.Conv2D(512, 3, strides=1, use_bias=False, padding='same')(x)
 
         x = Model_Structure.densedet_transition_block(x_38_38_512, 0.5, name='pool3')
         x = Model_Structure.densedet_dense_block(x, block[2], name='conv4')
 
-        x_19_19_1024 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=1024, alpha=1, stride=1, expansion=1, block_id=3)
+        x_19_19_1024 = tf.keras.layers.Conv2D(1024, 1, strides=1, use_bias=False, padding='same')(x)
 
         x = Model_Structure.densedet_transition_block(x_19_19_1024, 0.5, name='pool4')
         x = Model_Structure.densenet_dense_block(x, block[3], name='conv5')
         x = tf.keras.layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='bn')(x)
         x = tf.keras.layers.Activation('relu', name='relu')(x)
 
-        x_10_10_512 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=512, alpha=1, stride=1, expansion=1, block_id=4)
+        x_10_10_512 = tf.keras.layers.Conv2D(512, 3, strides=1, use_bias=False, padding='same')(x)
+
         x = Model_Structure.densedet_transition_block(x_10_10_512, 0.5, name='pool5')
 
-        x_5_5_256 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=256, alpha=1, stride=1, expansion=1, block_id=7)
+        x_5_5_256 = tf.keras.layers.Conv2D(256, 3, strides=1, use_bias=False, padding='same')(x)
 
         x = Model_Structure.densedet_transition_block(x_5_5_256, 0.5, name='pool6')
-        x_3_3_256 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=256, alpha=1, stride=1, expansion=1, block_id=5)
+        x_3_3_256 = tf.keras.layers.Conv2D(256, 3, strides=1, use_bias=False, padding='same')(x)
 
         x = Model_Structure.densedet_transition_block(x_3_3_256, 0.5, name='pool7')
         x = Model_Structure.densedet_transition_block(x, 0.5, name='pool8')
-        x_1_1_256 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=256, alpha=1, stride=1, expansion=1, block_id=6)
+        x_1_1_256 = tf.keras.layers.Conv2D(256, 3, strides=1, use_bias=False, padding='same')(x)
 
         return x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
 
@@ -10487,7 +10569,7 @@ class Models(object):
         # shape = (None, 16, 16, 320)
         # dtype = float32 >]
 
-        # x = Get_Model.EfficientDet(*backbones[PHI])
+        x = Get_Model.EfficientDet(*backbones[PHI])
         # x = Get_Model.MobileDetV2(inputs)
         # x = Get_Model.MobileDetV3Small(inputs)
         # x = Get_Model.GhostDet(inputs)
@@ -10541,7 +10623,7 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.GhostNet(inputs)
+        x = Get_Model.NB_DenseNet(inputs, block=[6, 12, 24, 16])
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -10651,7 +10733,6 @@ class Models(object):
     def captcha_model_ssd():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
         x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256 = Get_Model.SSD_VGG16(inputs)
-
         img_size = (IMAGE_WIDTH, IMAGE_HEIGHT)
         num_classes = Settings.settings()
         x = Normalize(20, name='conv4_3_norm')(x_38_38_512)
