@@ -3069,7 +3069,7 @@ class Predict_Image(object):
 def cheak_path(path):
     number = 0
     while True:
-        if not os.path.exists(path):
+        if os.path.exists(path):
             paths, name = os.path.split(path)
             name, mix = os.path.splitext(name)
             number = number + 1
@@ -8440,6 +8440,297 @@ class Model_Structure(object):
         # x = tf.keras.layers.Concatenate(axis=bn_axis, name=name + '_concat')([x, x1])
         return x
 
+    @staticmethod
+    def m2_conv2d(inputs, filters, kernel_size, strides, padding, name='conv'):
+        conv = tf.keras.layers.Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding=padding,
+                                      name=name + '_conv')(inputs)
+        bn = tf.keras.layers.BatchNormalization(name=name + '_BN')(conv)
+        relu = tf.keras.layers.Activation('relu', name=name)(bn)
+        return relu
+
+    @staticmethod
+    def m2_ffmv1(C4, C5, feature_size_1=256, feature_size_2=512, name='FFMv1'):
+        F4 = Model_Structure.m2_conv2d(C4, filters=feature_size_1, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name='F4')
+        F5 = Model_Structure.m2_conv2d(C5, filters=feature_size_2, kernel_size=(1, 1), strides=(1, 1), padding='same',
+                                       name='F5')
+        F5 = tf.keras.layers.UpSampling2D(size=(2, 2), name='F5_Up')(F5)
+        outputs = tf.keras.layers.Concatenate(name=name)([F4, F5])
+        return outputs
+
+    @staticmethod
+    def m2_ffmv2(stage, base, tum, base_size=(40, 40, 768), tum_size=(40, 40, 128), feature_size=128, name='FFMv2'):
+        outputs = Model_Structure.m2_conv2d(base, filters=feature_size, kernel_size=(1, 1), strides=(1, 1),
+                                            padding='same',
+                                            name=name + "_" + str(stage) + '_base_feature')
+        outputs = tf.keras.layers.Concatenate(name=name + "_" + str(stage))([outputs, tum])
+        return outputs
+
+    @staticmethod
+    def m2_tum(stage, inputs, feature_size=256, name="TUM"):
+        # 128
+        output_features = feature_size // 2
+
+        size_buffer = []
+
+        # 40,40,256
+        f1 = inputs
+        # 20,20,256
+        f2 = Model_Structure.m2_conv2d(f1, filters=feature_size, kernel_size=(3, 3), strides=(2, 2), padding='same',
+                                       name=name + "_" + str(stage) + '_f2')
+        # 10,10,256
+        f3 = Model_Structure.m2_conv2d(f2, filters=feature_size, kernel_size=(3, 3), strides=(2, 2), padding='same',
+                                       name=name + "_" + str(stage) + '_f3')
+        # 5,5,256
+        f4 = Model_Structure.m2_conv2d(f3, filters=feature_size, kernel_size=(3, 3), strides=(2, 2), padding='same',
+                                       name=name + "_" + str(stage) + '_f4')
+        # 3,3,256
+        f5 = Model_Structure.m2_conv2d(f4, filters=feature_size, kernel_size=(3, 3), strides=(2, 2), padding='same',
+                                       name=name + "_" + str(stage) + '_f5')
+        # 1,1,256
+        f6 = Model_Structure.m2_conv2d(f5, filters=feature_size, kernel_size=(3, 3), strides=(2, 2), padding='valid',
+                                       name=name + "_" + str(stage) + '_f6')
+
+        # 40,40
+        size_buffer.append([int(f1.shape[2])] * 2)
+        # 20,20
+        size_buffer.append([int(f2.shape[2])] * 2)
+        # 10,10
+        size_buffer.append([int(f3.shape[2])] * 2)
+        # 5,5
+        size_buffer.append([int(f4.shape[2])] * 2)
+        # 3,3
+        size_buffer.append([int(f5.shape[2])] * 2)
+
+        # print(size_buffer)
+        level = 2
+        c6 = f6
+        # 1,1,256
+        c5 = Model_Structure.m2_conv2d(c6, filters=feature_size, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name=name + "_" + str(stage) + '_c5')
+        # 3,3,256
+        c5 = tf.keras.layers.Lambda(lambda x: tf.image.resize(x, size=size_buffer[4]),
+                                    name=name + "_" + str(stage) + '_upsample_add5')(c5)
+        c5 = tf.keras.layers.Add()([c5, f5])
+
+        # 3,3,256
+        c4 = Model_Structure.m2_conv2d(c5, filters=feature_size, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name=name + "_" + str(stage) + '_c4')
+        # 5,5,256
+        c4 = tf.keras.layers.Lambda(lambda x: tf.image.resize(x, size=size_buffer[3]),
+                                    name=name + "_" + str(stage) + '_upsample_add4')(c4)
+        c4 = tf.keras.layers.Add()([c4, f4])
+
+        # 5,5,256
+        c3 = Model_Structure.m2_conv2d(c4, filters=feature_size, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name=name + "_" + str(stage) + '_c3')
+        # 10,10,256
+        c3 = tf.keras.layers.Lambda(lambda x: tf.image.resize(x, size=size_buffer[2]),
+                                    name=name + "_" + str(stage) + '_upsample_add3')(c3)
+        c3 = tf.keras.layers.Add()([c3, f3])
+
+        # 10,10,256
+        c2 = Model_Structure.m2_conv2d(c3, filters=feature_size, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name=name + "_" + str(stage) + '_c2')
+        # 20,20,256
+        c2 = tf.keras.layers.Lambda(lambda x: tf.image.resize(x, size=size_buffer[1]),
+                                    name=name + "_" + str(stage) + '_upsample_add2')(c2)
+        c2 = tf.keras.layers.Add()([c2, f2])
+
+        # 20,20,256
+        c1 = Model_Structure.m2_conv2d(c2, filters=feature_size, kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                       name=name + "_" + str(stage) + '_c1')
+        # 40,40,256
+        c1 = tf.keras.layers.Lambda(lambda x: tf.image.resize(x, size=size_buffer[0]),
+                                    name=name + "_" + str(stage) + '_upsample_add1')(c1)
+        c1 = tf.keras.layers.Add()([c1, f1])
+
+        level = 3
+
+        # 40,40,128
+        o1 = Model_Structure.m2_conv2d(c1, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o1')
+        # 20,20,128
+        o2 = Model_Structure.m2_conv2d(c2, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o2')
+        # 10,10,128
+        o3 = Model_Structure.m2_conv2d(c3, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o3')
+        # 5,5,128
+        o4 = Model_Structure.m2_conv2d(c4, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o4')
+        # 3,3,128
+        o5 = Model_Structure.m2_conv2d(c5, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o5')
+        # 1,1,128
+        o6 = Model_Structure.m2_conv2d(c6, filters=output_features, kernel_size=(1, 1), strides=(1, 1), padding='valid',
+                                       name=name + "_" + str(stage) + '_o6')
+
+        outputs = [o1, o2, o3, o4, o5, o6]
+
+        return outputs
+
+    @staticmethod
+    def m2_create_feature_pyramid(base_feature, stage=8):
+        features = [[], [], [], [], [], []]
+        # 将输入进来的
+        inputs = tf.keras.layers.Conv2D(filters=256, kernel_size=1, strides=1, padding='same')(base_feature)
+        # 第一个TUM模块
+        outputs = Model_Structure.m2_tum(1, inputs)
+        max_output = outputs[0]
+        for j in range(len(features)):
+            features[j].append(outputs[j])
+
+        # 第2,3,4个TUM模块，需要将上一个Tum模块输出的40x40x128的内容，传入到下一个Tum模块中
+        for i in range(2, stage + 1):
+            # 将Tum模块的输出和基础特征层传入到FFmv2层当中
+            # 输入为base_feature 40x40x768，max_output 40x40x128
+            # 输出为40x40x256
+            inputs = Model_Structure.m2_ffmv2(i - 1, base_feature, max_output)
+            # 输出为40x40x128、20x20x128、10x10x128、5x5x128、3x3x128、1x1x128
+            outputs = Model_Structure.m2_tum(i, inputs)
+
+            max_output = outputs[0]
+            for j in range(len(features)):
+                features[j].append(outputs[j])
+        # 进行了4次TUM
+        # 将获得的同样大小的特征层堆叠到一起
+        concatenate_features = []
+        for feature in features:
+            concat = tf.keras.layers.Concatenate()([f for f in feature])
+            concatenate_features.append(concat)
+        return concatenate_features
+
+    @staticmethod
+    def m2_calculate_input_sizes(concatenate_features):
+        input_size = []
+        for features in concatenate_features:
+            size = (int(features.shape[1]), int(features.shape[2]), int(features.shape[3]))
+            input_size.append(size)
+
+        return input_size
+
+    # 注意力机制
+    @staticmethod
+    def m2_se_block(inputs, input_size, compress_ratio=16, name='SE_block'):
+        pool = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+        reshape = tf.keras.layers.Reshape((1, 1, input_size[2]))(pool)
+
+        fc1 = tf.keras.layers.Conv2D(filters=input_size[2] // compress_ratio, kernel_size=1, strides=1, padding='valid',
+                                     activation='relu', name=name + '_fc1')(reshape)
+        fc2 = tf.keras.layers.Conv2D(filters=input_size[2], kernel_size=1, strides=1, padding='valid',
+                                     activation='sigmoid',
+                                     name=name + '_fc2')(fc1)
+
+        reweight = tf.keras.layers.Multiply(name=name + '_reweight')([inputs, fc2])
+
+        return reweight
+
+    @staticmethod
+    def m2_sfam(feature_pyramid, input_sizes, compress_ratio=16, name='SFAM'):
+        outputs = []
+        for i in range(len(input_sizes)):
+            input_size = input_sizes[i]
+            _input = feature_pyramid[i]
+            _output = Model_Structure.m2_se_block(_input, input_size, compress_ratio=compress_ratio,
+                                                  name='SE_block_' + str(i))
+            outputs.append(_output)
+        return outputs
+
+    @staticmethod
+    def m2_vgg16(inputs, **kwargs):
+        x = tf.keras.layers.Conv2D(64, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv1_1')(inputs)
+        x = tf.keras.layers.Conv2D(64, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv1_2')(x)
+        x = tf.keras.layers.MaxPooling2D((2, 2), strides=(2, 2), padding='same', name='pool1')(x)
+        x = tf.keras.layers.Conv2D(128, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv2_1')(x)
+        x = tf.keras.layers.Conv2D(128, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv2_2')(x)
+        x_75_75_128 = tf.keras.layers.MaxPooling2D((2, 2), strides=(2, 2), padding='same', name='pool2')(x)
+
+        x = tf.keras.layers.Conv2D(256, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv3_1')(x_75_75_128)
+        x = tf.keras.layers.Conv2D(256, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv3_2')(x)
+        x = tf.keras.layers.Conv2D(256, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv3_3')(x)
+        x_38_38_256 = tf.keras.layers.MaxPooling2D((2, 2), strides=(2, 2), padding='same', name='pool3')(x)
+
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv4_1')(x_38_38_256)
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv4_2')(x)
+        x_38_38_512 = tf.keras.layers.Conv2D(512, kernel_size=(3, 3),
+                                             activation='relu',
+                                             padding='same', name='conv4_3')(x)
+
+        x = tf.keras.layers.Conv2D(1024, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv5_1')(x_38_38_512)
+        x = tf.keras.layers.Conv2D(1024, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv5_2')(x)
+        x = tf.keras.layers.Conv2D(1024, kernel_size=(3, 3),
+                                   activation='relu',
+                                   padding='same', name='conv5_3')(x)
+        x_19_19_1024 = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2), padding='same', name='pool5')(x)
+        return x_38_38_256, x_38_38_512, x_19_19_1024
+
+    @staticmethod
+    def repvgg_conv_bn(x, out_channels, kernel_size, stride, padding, groups=1, name='deploy'):
+        x = tf.keras.layers.Conv2D(out_channels, kernel_size=kernel_size, strides=stride, padding=padding,
+                                   groups=groups, name=name + '_cn')(x)
+
+        x = tf.keras.layers.BatchNormalization(name=name + '_bn')(x)
+        return x
+
+    @staticmethod
+    def repvgg_block(inputs, out_channels, kernel_size, stride=1, padding='same', dilation=1, groups=1, deploy=False,
+                     name='deploy'):
+        if deploy:
+            x = tf.keras.layers.Conv2D(out_channels, kernel_size=kernel_size, strides=stride, padding=padding,
+                                       groups=groups, dilation_rate=dilation, use_bias=True,
+                                       name=name + 'keep_cb_cn')(
+                inputs)
+            return tf.keras.layers.BatchNormalization(name=name + 'keep_cb_bn')(x)
+        else:
+            if stride == 1:
+                x = tf.keras.layers.BatchNormalization(name=name + 'dropout_bn')(inputs)
+                rbp_1x1 = Model_Structure.repvgg_conv_bn(inputs, out_channels, 1, stride, padding, groups,
+                                                         name=name + 'dropout_cn')
+                rbp_dense = Model_Structure.repvgg_conv_bn(inputs, out_channels, kernel_size, stride, padding, groups,
+                                                           name=name + 'keep_cb')
+                return x + rbp_1x1 + rbp_dense
+            else:
+                rbp_1x1 = Model_Structure.repvgg_conv_bn(inputs, out_channels, 1, stride, padding, groups,
+                                                         name=name + 'dropout_cn')
+                rbp_dense = Model_Structure.repvgg_conv_bn(inputs, out_channels, kernel_size, stride, padding, groups,
+                                                           name + 'keep_cb')
+                return rbp_1x1 + rbp_dense
+
+    @staticmethod
+    def repvgg_make_stage(x, planes, num_blocks, stride, override_groups_map, deploy, name='stage'):
+        cur_layer_idx = 1
+        strides = [stride] + [1] * (num_blocks - 1)
+        for index, stride in enumerate(strides):
+            cur_groups = override_groups_map.get(cur_layer_idx, 1)
+            x = Model_Structure.repvgg_block(x, planes, kernel_size=3,
+                                             stride=stride, padding='same', groups=cur_groups, deploy=deploy,
+                                             name=name + str(index))
+            cur_layer_idx += 1
+        return x
+
 
 class Get_Model(object):
     # DenseNet
@@ -10227,20 +10518,16 @@ class Get_Model(object):
         x = tf.keras.layers.Activation('relu', name='conv1/relu')(x)
         x = tf.keras.layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(x)
         x = tf.keras.layers.MaxPooling2D(3, strides=2, name='pool1')(x)
-        x_128_128_24 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=24, alpha=1, stride=1, expansion=1, block_id=1)
+        x_128_128_24 = tf.keras.layers.Conv2D(24, 3, strides=1, use_bias=False, padding='same')(x)
         x = Model_Structure.densedet_dense_block(x_128_128_24, block[0], name='conv2')
         x = Model_Structure.densedet_transition_block(x, 0.5, name='pool2')
-        x_64_64_40 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=40, alpha=1, stride=1, expansion=1, block_id=0)
+        x_64_64_40 = tf.keras.layers.Conv2D(40, 3, strides=1, use_bias=False, padding='same')(x)
         x = Model_Structure.densedet_dense_block(x_64_64_40, block[1], name='conv3')
         x = Model_Structure.densedet_transition_block(x, 0.5, name='pool3')
-        x_32_32_112 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=112, alpha=1, stride=1, expansion=1, block_id=2)
+        x_32_32_112 = tf.keras.layers.Conv2D(112, 3, strides=1, use_bias=False, padding='same')(x)
         x = Model_Structure.densedet_dense_block(x_32_32_112, block[2], name='conv4')
         x = Model_Structure.densedet_transition_block(x, 0.5, name='pool4')
-        x_16_16_320 = Model_Structure.mobilenet_v2_inverted_res_block(
-            x, filters=320, alpha=1, stride=1, expansion=1, block_id=6)
+        x_16_16_320 = tf.keras.layers.Conv2D(320, 3, strides=1, use_bias=False, padding='same')(x)
         return x_256_256_16, x_128_128_24, x_64_64_40, x_32_32_112, x_16_16_320
 
     @staticmethod
@@ -10417,8 +10704,6 @@ class Get_Model(object):
         x = tf.keras.layers.ReLU(6., name='out_relu')(x)
         x_10_10_512 = Model_Structure.mobilenet_v2_inverted_res_block(
             x, filters=512, alpha=alpha, stride=1, expansion=1, block_id=22)
-        # x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
-        # logger.debug(x)
         x_5_5_256 = Model_Structure.mobilenet_v2_inverted_res_block(
             x_10_10_512, filters=256, alpha=alpha, stride=2, expansion=1, block_id=17)
         x_3_3_256 = Model_Structure.mobilenet_v2_inverted_res_block(
@@ -10472,6 +10757,39 @@ class Get_Model(object):
         x_1_1_256 = tf.keras.layers.Conv2D(256, 3, strides=1, use_bias=False, padding='same')(x)
 
         return x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
+
+    @staticmethod
+    def M2_MODEL(inputs, **kwargs):
+        C3, C4, C5 = Model_Structure.m2_vgg16(inputs)
+        base_feature = Model_Structure.m2_ffmv1(C4, C5, feature_size_1=256, feature_size_2=512)
+        feature_pyramid = Model_Structure.m2_create_feature_pyramid(base_feature, stage=4)
+        feature_pyramid_sizes = Model_Structure.m2_calculate_input_sizes(feature_pyramid)
+        x_38_38_512, x_19_19_512, x_10_10_512, x_5_5_512, x_3_3_512, x_1_1_512 = Model_Structure.m2_sfam(
+            feature_pyramid, feature_pyramid_sizes)
+        x_19_19_1024 = tf.keras.layers.Conv2D(1024, kernel_size=(1, 1), activation='relu', padding='same')(x_19_19_512)
+        x_5_5_256 = tf.keras.layers.Conv2D(256, kernel_size=(1, 1), activation='relu', padding='same')(x_5_5_512)
+        x_3_3_256 = tf.keras.layers.Conv2D(256, kernel_size=(1, 1), activation='relu', padding='same')(x_3_3_512)
+        x_1_1_256 = tf.keras.layers.Conv2D(256, kernel_size=(1, 1), activation='relu', padding='same')(x_1_1_512)
+        return x_38_38_512, x_19_19_1024, x_10_10_512, x_5_5_256, x_3_3_256, x_1_1_256
+
+    @staticmethod
+    def REPVGG(inputs, num_blocks, width_multiplier, override_groups_map={{}}, deploy=False, **kwargs):
+        x = Model_Structure.repvgg_block(inputs, 64, kernel_size=3, stride=2, padding='same', deploy=deploy,
+                                         name='conv_1')
+
+        x = Model_Structure.repvgg_make_stage(x, planes=int(64 * width_multiplier[0]), num_blocks=num_blocks[0],
+                                              stride=2, override_groups_map=override_groups_map, deploy=deploy,
+                                              name='conv_2')
+        x = Model_Structure.repvgg_make_stage(x, planes=int(128 * width_multiplier[1]), num_blocks=num_blocks[1],
+                                              stride=2, override_groups_map=override_groups_map, deploy=deploy,
+                                              name='conv_3')
+        x = Model_Structure.repvgg_make_stage(x, planes=int(256 * width_multiplier[2]), num_blocks=num_blocks[2],
+                                              stride=2, override_groups_map=override_groups_map, deploy=deploy,
+                                              name='conv_4')
+        x = Model_Structure.repvgg_make_stage(x, planes=int(512 * width_multiplier[3]), num_blocks=num_blocks[3],
+                                              stride=2, override_groups_map=override_groups_map, deploy=deploy,
+                                              name='conv_5')
+        return x
 
 
 class Models(object):
@@ -10608,7 +10926,7 @@ class Models(object):
     @staticmethod
     def captcha_model():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.SE_DenseNet(inputs, block=[6, 12, 32, 32])
+        x = Get_Model.NB_DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=CAPTCHA_LENGTH * Settings.settings(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -10623,12 +10941,12 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.NB_DenseNet(inputs, block=[6, 12, 24, 16])
+        x = Get_Model.GhostNet(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
+        # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                                                    weight_decay=1e-2, rectify=False),
                       loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
@@ -10835,6 +11153,35 @@ class Models(object):
 
 ### 图像分类
 ## big(适合使用GPU训练)
+
+
+# RepVGG_A0
+# x = Get_Model.REPVGG(inputs, num_blocks=[2, 4, 14, 1], width_multiplier=[0.75, 0.75, 0.75, 2.5], deploy=False)
+# RepVGG_A1
+# x = Get_Model.REPVGG(inputs, num_blocks=[2, 4, 14, 1], width_multiplier=[1, 1, 1, 2.5], deploy=False)
+# RepVGG_A2
+# x = Get_Model.REPVGG(inputs, num_blocks=[2, 4, 14, 1], width_multiplier=[1.5, 1.5, 1.5, 2.75], deploy=False)
+# RepVGG_B0
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[1, 1, 1, 2.5], deploy=False)
+# RepVGG_B1
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2, 2, 2, 4], deploy=False)
+# RepVGG_B1g2
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2, 2, 2, 4], deploy=False, override_groups_map={{l: 2 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+# RepVGG_B1g4
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2, 2, 2, 4], deploy=False, override_groups_map={{l: 4 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+# RepVGG_B2
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2.5, 2.5, 2.5, 5], deploy=False)
+# RepVGG_B2g2
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2.5, 2.5, 2.5, 5], deploy=False, override_groups_map={{l: 2 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+# RepVGG_B2g4
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[2.5, 2.5, 2.5, 5], deploy=False, override_groups_map={{l: 4 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+# RepVGG_B3
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[3, 3, 3, 5], deploy=False)
+# RepVGG_B3g2
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[3, 3, 3, 5], deploy=False, override_groups_map={{l: 2 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+# RepVGG_B3g4
+# x = Get_Model.REPVGG(inputs, num_blocks=[4, 6, 16, 1], width_multiplier=[3, 3, 3, 5], deploy=False, override_groups_map={{l: 4 for l in [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]}})
+
 # InceptionResNetV2
 # x = Get_Model.InceptionResNetV2(inputs)
 

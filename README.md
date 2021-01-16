@@ -67,7 +67,8 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
     5.创建python3.7.7的虚拟环境并进入 (conda create -n example python=3.7.7) (conda activate example)
     6.安装tensorflow2.2 (pip install tensorflow-gpu==2.2 -i https://pypi.douban.com/simple)
     7.安装cudnn (conda install cudatoolkit=10.1 cudnn=7.6.5)
-    8.再安装其他依赖 (pip install -r requirements.txt -i https://pypi.douban.com/simple)
+    8.将requirements.txt的版本换成tensorflow2.2
+    9.再安装其他依赖 (pip install -r requirements.txt -i https://pypi.douban.com/simple)
     
     tensorflow2.3
     1.安装CUDA 11版本 (官网)[https://developer.nvidia.com/cuda-toolkit]
@@ -161,16 +162,21 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
     运行train.py
 
-    
 ### 第八步:开启可视化(这步可以省略)
 
     tensorboard --logdir "logs"
 
 ### 第九步:评估模型
 
+    保存模型
+    
+    运行save_model.py
+
     丹药出来后要看一下是几品丹药
     
 	运行test.py
+	
+	目标检测任务运行test_map.py
 
 ### 第十步:开启后端
 
@@ -228,13 +234,17 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### 训练次数
 
-    EPOCHS = 200
+    EPOCHS = 900
 
-请放心调有训练多少轮验证损失下不去，停止训练的回调设置
-
-还有断点续训的回调设置
+还有断点续训的回调设置，没轮训练都会保存模型
 
     EARLY_PATIENCE = 8
+    
+### 模型名字
+
+    MODEL_NAME = captcha.h5
+
+去掉后缀会保存pb模型
     
 其他设置如果没有特别情况，尽量不要改
 
@@ -256,6 +266,12 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### CSVLogger
     把训练轮结果数据流到 csv 文件
     
+### inputs
+    测试map所需文件
+    detection-results 模型预测结果
+    ground-truth      正确结果
+    images-optional   图片文件
+    
 ### label
 	标签存放路径
 
@@ -264,6 +280,9 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### model
     保存模型
+    
+### output
+    测试map输出文件
     
 ### train_dataset
     保存训练集
@@ -280,7 +299,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ### test_dataset
     保存测试集
     
-    
+  
 ## 文件
 
 ### New_work.py
@@ -360,14 +379,17 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	Predict.predict_image(image)返回的是PIL图片对象
 	
 	可以用.show()查看处理后的图片
+	
+### test_map.py
+    测试模型map
 
 ### train.py
     开始训练
 
 ## 2.2 细节描述
 ### 目标检测(EFFICIENTDET)
-	把数据集放到	train_dataset
-	把标签放到		label
+	把数据集放到	train_dataset   文件夹
+	把标签放到		label       文件夹
 	[标签格式](https://github.com/yuzhiyizhan/generate_click_captcha)
 	运行 move_path.py 区分数据集(可省略)
 	运行 train.py 开始训练
@@ -582,9 +604,7 @@ CTC的标签比较简单，比如1表示龙，2表示舟
 
 验证码图片部分有6张图片且图片的分布是固定的也就是说坐标是固定的
 
-那么可以把图片分割成9份，分开来识别，当然现在只是想想肯定有更好的思路
-
-(已确定思路正确)
+那么可以把图片分割成9份，分开来识别
 
 特别感谢下面一些项目对我的启发
 
@@ -639,6 +659,12 @@ CTC的标签比较简单，比如1表示龙，2表示舟
 由于大佬的设置比较麻烦，我做了少许修改如有不妥之处请及时联系我删除
 
 感谢大佬们的数据集让我省去很多成本和时间
+
+测试map改自
+
+[mAP](https://github.com/Cartucho/mAP)
+
+修改了可以显示中文标签，但是保存的图片显示不正确，如果有大佬知道麻烦联系一下我，感谢
 
 搜狗验证码链接： 提取码：9uxv
 -------------------------------------
@@ -772,6 +798,16 @@ qq2387301977
 
 	待更新目标检测轻量模型，测试MAP
 	
+## 2021/01/16
+
+    增加了测试MAP
+	
+    增加了目标检测轻量模型
+    
+    待修复数据管道BUG，现在先暂时这么用
+    
+    待更新ONNX+TensorRT部署模型
+    
     
 # 遇到的错误和解决方法
 

@@ -1255,29 +1255,31 @@ class Predict_Image(object):
 
 
 def get_ground_truth(image):
-    if len(os.listdir(GT_PATH)) == 0:
-        paths = os.path.splitext(os.path.split(image)[-1])[0]
-        try:
-            label = (paths, glob.glob(f'{LABEL_PATH}/*/{paths}.xml')[0])
-        except:
-            label = (paths, glob.glob(f'{LABEL_PATH}/{paths}.xml')[0])
-        index, label_xml = label
-        file = open(label_xml, encoding='utf-8')
-        for i in ET.parse(file).getroot().iter('object'):
-            with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
-                result = f.read()
-            num_classes_dict = json.loads(result)
-            if len(num_classes_dict) == 1:
-                classes = 'block'
-            else:
-                classes = i.find('name').text
-            xmlbox = i.find('bndbox')
-            box = (int(float(xmlbox.find('xmin').text)), int(float(xmlbox.find('ymin').text)),
-                   int(float(xmlbox.find('xmax').text)),
-                   int(float(xmlbox.find('ymax').text)))
-            with open(os.path.join(GT_PATH, index + '.txt'), mode='a', encoding='utf-8') as f:
-                f.write(f'{classes} {box[0]} {box[1]} {box[2]} {box[3]}\n')
-        file.close()
+    paths = os.path.splitext(os.path.split(image)[-1])[0]
+    try:
+        label = (paths, glob.glob(f'{LABEL_PATH}/*/{paths}.xml')[0])
+    except:
+        label = (paths, glob.glob(f'{LABEL_PATH}/{paths}.xml')[0])
+    index, label_xml = label
+    file = open(label_xml, encoding='utf-8')
+    for i in ET.parse(file).getroot().iter('object'):
+        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
+            result = f.read()
+        num_classes_dict = json.loads(result)
+        if len(num_classes_dict) == 1:
+            classes = 'block'
+        else:
+            classes = i.find('name').text
+        xmlbox = i.find('bndbox')
+        box = (int(float(xmlbox.find('xmin').text)), int(float(xmlbox.find('ymin').text)),
+               int(float(xmlbox.find('xmax').text)),
+               int(float(xmlbox.find('ymax').text)))
+        with open(os.path.join(GT_PATH, index + '.txt'), mode='a', encoding='utf-8') as f:
+            f.write(f'{classes} {box[0]} {box[1]} {box[2]} {box[3]}\n')
+    file.close()
+
+
+def get_images_optional(image):
     _, file = os.path.split(image)
     new_file = os.path.join(IMG_PATH, file)
     logger.debug(f'正在复制{image}到{new_file}')
@@ -1294,10 +1296,15 @@ if not os.path.exists(DR_PATH):
 if not os.path.exists(IMG_PATH):
     os.mkdir(IMG_PATH)
 
+test_image_list = Image_Processing.extraction_image(TEST_PATH)
 if len(os.listdir(IMG_PATH)) == 0:
-    test_image_list = Image_Processing.extraction_image(TEST_PATH)
+    for image in test_image_list:
+        get_images_optional(image)
+
+if len(os.listdir(GT_PATH)) == 0:
     for image in test_image_list:
         get_ground_truth(image)
+
 if len(os.listdir(DR_PATH)) == 0:
     if PRUNING:
         model_path = os.path.join(MODEL_PATH, PRUNING_MODEL_NAME)
