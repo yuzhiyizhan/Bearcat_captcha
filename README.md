@@ -137,7 +137,7 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 	
 	大于配置文件高宽的图片先进行等比缩小然后再填充
 	
-	填充的值为255也就是白色
+	填充的值为128也就是灰色
 	
 	注意:IMAGE_CHANNALS为1时，不能载入imagenet的模型权重
 
@@ -535,10 +535,10 @@ tf.Tensor(
         nh = int(ih * scale)
         image = image.resize((nw, nh), Image.BICUBIC)
         if IMAGE_CHANNALS == 3:
-            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (128, 128, 128))
             new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
         else:
-            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+            new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (128, 128, 128))
             new_image = new_image.convert('L')
             new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
             table = []
