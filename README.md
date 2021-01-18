@@ -298,6 +298,9 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
     
 ### test_dataset
     保存测试集
+	
+### visualization
+	保存网络的类激活热力图
     
   
 ## 文件
@@ -385,6 +388,9 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ### train.py
     开始训练
+	
+### visualization_cnn.py
+	生成网络的类激活热力图，用于查看网络用什么特征进行预测
 
 ## 2.2 细节描述
 ### 目标检测(EFFICIENTDET)
@@ -804,6 +810,14 @@ qq2387301977
 	
     增加了目标检测轻量模型
     
+    待修复数据管道BUG，现在先暂时这么用
+    
+    待更新ONNX+TensorRT部署模型
+	
+## 2021/01/18
+	
+	增加类激活热力图可视化
+	
     待修复数据管道BUG，现在先暂时这么用
     
     待更新ONNX+TensorRT部署模型

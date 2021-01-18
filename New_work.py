@@ -354,6 +354,7 @@ from {work_path}.{project_name}.settings import INPUT_PATH
 from {work_path}.{project_name}.settings import OUTPUT_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PATH
 from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
+from {work_path}.{project_name}.settings import VISUALIZATION_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
 from concurrent.futures import ThreadPoolExecutor
 
@@ -368,8 +369,7 @@ def del_file(path):
 
 if __name__ == '__main__':
     path = [INPUT_PATH, OUTPUT_PATH, TRAIN_PATH, TEST_PATH, VALIDATION_PATH, TRAIN_PACK_PATH, VALIDATION_PACK_PATH,
-            LABEL_PATH,
-            WEIGHT]
+            LABEL_PATH, WEIGHT, VISUALIZATION_PATH]
     with ThreadPoolExecutor(max_workers=50) as t:
         for i in path:
             t.submit(del_file, i)
@@ -2351,7 +2351,7 @@ class Predict_Image(object):
             self.model.allocate_tensors()
         else:
             self.model = operator.methodcaller(MODEL)(Models)
-            self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
+            self.model.load_weights(self.model_path)
         logger.debug('加载模型到内存')
         with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             result = f.read()
@@ -3177,6 +3177,7 @@ from {work_path}.{project_name}.settings import INPUT_PATH
 from {work_path}.{project_name}.settings import BASIC_PATH
 from {work_path}.{project_name}.settings import TRAIN_PATH
 from {work_path}.{project_name}.settings import OUTPUT_PATH
+from {work_path}.{project_name}.settings import VISUALIZATION_PATH
 from {work_path}.{project_name}.settings import VALIDATION_PACK_PATH
 from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import TRAIN_PACK_PATH
@@ -3188,7 +3189,8 @@ from {work_path}.{project_name}.settings import CHECKPOINT_PATH
 
 
 def chrak_path():
-    paths = [INPUT_PATH, GT_PATH, DR_PATH, IMG_PATH, TEST_PATH, TRAIN_PATH, VALIDATION_PATH, TRAIN_PACK_PATH,
+    paths = [INPUT_PATH, VISUALIZATION_PATH, GT_PATH, DR_PATH, IMG_PATH, TEST_PATH, TRAIN_PATH, VALIDATION_PATH,
+             TRAIN_PACK_PATH,
              VALIDATION_PACK_PATH, MODEL_PATH, os.path.join(BASIC_PATH, 'logs'),
              os.path.join(BASIC_PATH, 'CSVLogger'), CHECKPOINT_PATH, WEIGHT,
              LABEL_PATH, APP_MODEL_PATH, OUTPUT_PATH]
@@ -11801,6 +11803,9 @@ IMG_PATH = os.path.join(INPUT_PATH, 'images-optional')
 
 OUTPUT_PATH = os.path.join(BASIC_PATH, 'output')
 
+# 可视化卷积层
+VISUALIZATION_PATH = os.path.join(BASIC_PATH, 'visualization')
+
 """
 
 
@@ -12172,6 +12177,115 @@ else:
 """
 
 
+def visualization_cnn(work_path, project_name):
+    return f"""import os
+import cv2
+import operator
+import numpy as np
+import tensorflow as tf
+from loguru import logger
+import matplotlib.pyplot as plt
+import tensorflow.keras.backend as K
+from {work_path}.{project_name}.settings import MODEL
+from {work_path}.{project_name}.models import Models
+from {work_path}.{project_name}.settings import TEST_PATH
+from {work_path}.{project_name}.settings import MODEL_PATH
+from {work_path}.{project_name}.settings import MODEL_NAME
+from {work_path}.{project_name}.utils import Predict_Image
+from {work_path}.{project_name}.utils import Image_Processing
+from {work_path}.{project_name}.settings import VISUALIZATION_PATH
+
+image_path = Image_Processing.extraction_image(TEST_PATH)[0]
+model_path = os.path.join(MODEL_PATH, MODEL_NAME)
+model = operator.methodcaller(MODEL)(Models)
+model.load_weights(model_path, by_name=True, skip_mismatch=True)
+
+Predict = Predict_Image(model_path=model_path)
+
+img = Predict.decode_image(image_path)
+Predictions = model.predict(img)
+
+last_conv_layer_name = [i.name for i in model.layers]
+output_path = os.path.join(VISUALIZATION_PATH, 'heat_map')
+if not os.path.exists(output_path):
+    os.mkdir(output_path)
+
+for index, layer_name in enumerate(last_conv_layer_name):
+    try:
+        heatmap_model = tf.keras.models.Model([model.inputs], [model.get_layer(layer_name).output, model.output])
+        with tf.GradientTape() as gtape:
+            conv_output, Predictions = heatmap_model(img)
+            prob = Predictions[:, np.argmax(Predictions[0])]
+            grads = gtape.gradient(prob, conv_output)
+            if grads is None:
+                pass
+            else:
+                pooled_grads = K.mean(grads, axis=(0, 1, 2))
+
+        heatmap = tf.reduce_mean(tf.multiply(pooled_grads, conv_output), axis=-1)
+        heatmap = np.maximum(heatmap, 0)
+        max_heat = np.max(heatmap)
+        if max_heat == 0:
+            max_heat = 1e-10
+        heatmap /= max_heat
+        plt.matshow(heatmap[0], cmap='viridis')
+        original_img = cv2.imread(image_path)
+        if original_img is None:
+            original_img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8),
+                                        cv2.IMREAD_COLOR)
+        heatmap1 = cv2.resize(heatmap[0], (original_img.shape[1], original_img.shape[0]), interpolation=cv2.INTER_CUBIC)
+        heatmap1 = np.uint8(255 * heatmap1)
+        heatmap1 = cv2.applyColorMap(heatmap1, cv2.COLORMAP_JET)
+        frame_out = cv2.addWeighted(original_img, 0.5, heatmap1, 0.5, 0)
+        cv2.imwrite(f'{{os.path.join(output_path, str(index) + layer_name)}}.jpg', frame_out)
+        plt.figure()
+        plt.imshow(frame_out)
+        # plt.show()
+    except Exception as e:
+        pass
+
+# 
+# layer_outputs = [layer.output for layer in model.layers]
+# activation_model = tf.keras.models.Model(inputs=model.input, outputs=layer_outputs)
+# 
+# activations = activation_model.predict(img)
+# 
+# plt.matshow(activations[1][0, :, :, 0], cmap='viridis')
+# plt.matshow(activations[1][0, :, :, 1], cmap='viridis')
+# layer_names = []
+# for layer in model.layers:
+#     layer_names.append(layer.name)
+# 
+# images_per_row = 16
+# 
+# for layer_name, layer_activation in zip(layer_names, activations):
+#     n_feature = layer_activation.shape[-1]  # 每层输出的特征层数
+#     size = layer_activation.shape[1]  # 每层的特征大小
+#     n_cols = n_feature // images_per_row  # 特征图平铺的行数
+#     display_grid = np.zeros((size * n_cols, images_per_row * size))  # 每层图片大小
+#     for col in range(n_cols):  # 行扫描
+#         for row in range(images_per_row):  # 平铺每行
+#             # print(layer_activation.shape)
+#             # print(col*images_per_row+row)
+#             channel_image = layer_activation[0, :, :, col * images_per_row + row]  # 写入col*images_per_row+row特征层
+#             channel_image -= channel_image.mean()  # 标准化处理，增加可视化效果
+#             channel_image /= channel_image.std()
+#             channel_image *= 64
+#             channel_image += 128
+#             channel_image = np.clip(channel_image, 0, 255).astype('uint8')
+#             # print(channel_image.shape)
+#             # print(display_grid[col*size:(col+1)*size, row*size:(row+1)*size].shape)
+#             display_grid[col * size:(col + 1) * size, row * size:(row + 1) * size] = channel_image  # 写入大图中
+#     scale = 1. / size  # 每组图缩放系数
+#     plt.figure(figsize=(scale * display_grid.shape[1], scale * display_grid.shape[0]))
+#     plt.title(layer_name)
+#     plt.grid(False)
+#     plt.imshow(display_grid, aspect='auto', cmap='viridis')
+#     plt.show()
+
+"""
+
+
 class New_Work(object):
     def __init__(self, work_path='works', project_name='project'):
         self.work_parh = work_path
@@ -12252,6 +12366,10 @@ class New_Work(object):
         with open(self.file_name('train.py'), 'w', encoding='utf-8') as f:
             f.write(train(self.work_parh, self.project_name))
 
+    def visualization_cnn(self):
+        with open(self.file_name('visualization_cnn.py'), 'w', encoding='utf-8') as f:
+            f.write(visualization_cnn(self.work_parh, self.project_name))
+
     def main(self):
         self.callback()
         self.app()
@@ -12269,6 +12387,7 @@ class New_Work(object):
         self.spider_example()
         self.test()
         self.train()
+        self.visualization_cnn()
         with open('map_example.py', 'r', encoding='utf-8') as f:
             content = f.read()
 
@@ -12280,4 +12399,4 @@ class New_Work(object):
 
 
 if __name__ == '__main__':
-    New_Work(work_path='works', project_name='simple_s').main()
+    New_Work(work_path='works', project_name='simple').main()
