@@ -432,6 +432,7 @@ from {work_path}.{project_name}.settings import DATA_ENHANCEMENT
 from {work_path}.{project_name}.settings import TRAIN_PATH
 from concurrent.futures import ThreadPoolExecutor
 
+mean_time = []
 right_value = 0
 predicted_value = 0
 start = time.time()
@@ -2582,6 +2583,7 @@ class Predict_Image(object):
             raise ValueError(f'还没写{{MODE}}这种预测方法')
 
     def predict_image(self, image_path):
+        global mean_time
         global right_value
         global predicted_value
         start_time = time.time()
@@ -2690,7 +2692,9 @@ class Predict_Image(object):
                 draw.text(text_origin, str(label, 'UTF-8'), fill=(0, 0, 0), font=font)
                 del draw
             end_time = time.time()
+            mean_time.append(end_time - start_time)
             logger.info(f'识别时间为{{end_time - start_time}}s')
+            logger.info(f'平均识别时间为{{np.mean(mean_time)}}s')
             logger.info(f'总体置信度为{{round(self.recognition_probability(recognition_rate_list), 2) * 100}}%')
             return image
 
@@ -2759,7 +2763,9 @@ class Predict_Image(object):
                 draw.text(text_origin, str(label, 'UTF-8'), fill=(0, 0, 0), font=font)
                 del draw
             end_time = time.time()
+            mean_time.append(end_time - start_time)
             logger.info(f'识别时间为{{end_time - start_time}}s')
+            logger.info(f'平均识别时间为{{np.mean(mean_time)}}s')
             logger.info(f'总体置信度为{{round(self.recognition_probability(recognition_rate_list), 2) * 100}}%')
             return image
 
@@ -2844,7 +2850,9 @@ class Predict_Image(object):
                 draw.text(text_origin, str(label, 'UTF-8'), fill=(0, 0, 0), font=font)
                 del draw
             end_time = time.time()
+            mean_time.append(end_time - start_time)
             logger.info(f'识别时间为{{end_time - start_time}}s')
+            logger.info(f'平均识别时间为{{np.mean(mean_time)}}s')
             logger.info(f'总体置信度为{{round(self.recognition_probability(recognition_rate_list), 2) * 100}}%')
             return image
 
@@ -2880,8 +2888,10 @@ class Predict_Image(object):
                 if predicted_value > 0:
                     logger.info(f'预测正确{{predicted_value}}张图片')
             end_time = time.time()
+            mean_time.append(end_time - start_time)
             logger.info(f'已识别{{right_value}}张图片')
             logger.info(f'识别时间为{{end_time - start_time}}s')
+            logger.info(f'平均识别时间为{{np.mean(mean_time)}}s')
             # return Image.fromarray(image_object[0] * 255)
 
     def close_session(self):
@@ -3723,8 +3733,8 @@ class wBiFPNAdd(tf.keras.layers.Layer):
         }})
         return config
 
-class BilinearInterpolation(tf.keras.layers.Layer):
 
+class BilinearInterpolation(tf.keras.layers.Layer):
 
     def __init__(self, output_size, dynamic=True, **kwargs):
         self.output_size = output_size
@@ -8860,6 +8870,35 @@ class Model_Structure(object):
             cur_layer_idx += 1
         return x
 
+    @staticmethod
+    def mobilenext_make_divisible(channels, divisor, min_value=None):
+        if min_value is None:
+            min_value = divisor
+        new_channels = max(min_value, int(channels + divisor / 2) // divisor * divisor)
+        # Make sure that round down does not go down by more than 10%.
+        if new_channels < 0.9 * channels:
+            new_channels += divisor
+        return new_channels
+
+    @staticmethod
+    def mobilenext_sandglassblock(inputs, in_channels, out_channels, stride, reduction):
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=3, strides=1, padding='same', use_bias=False)(inputs)
+        x = tf.keras.layers.BatchNormalization(momentum=0.999, epsilon=1e-3)(x)
+        x = tf.keras.layers.ReLU(6.)(x)
+        x = tf.keras.layers.Conv2D(filters=in_channels // reduction, kernel_size=1, strides=1, padding='same',
+                                   use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization(momentum=0.999, epsilon=1e-3)(x)
+        x = tf.keras.layers.Conv2D(filters=out_channels, kernel_size=1, strides=1, padding='same', use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization(momentum=0.999, epsilon=1e-3)(x)
+        x = tf.keras.layers.ReLU(6.)(x)
+        x = tf.keras.layers.DepthwiseConv2D(kernel_size=3, strides=stride, padding='same' if stride == 1 else 'valid',
+                                            use_bias=False)(x)
+        x = tf.keras.layers.BatchNormalization(momentum=0.999, epsilon=1e-3)(x)
+        if in_channels == out_channels and stride == 1:
+            return x + inputs
+        else:
+            return x
+
 
 class Get_Model(object):
     # DenseNet
@@ -10920,6 +10959,33 @@ class Get_Model(object):
                                               name='conv_5')
         return x
 
+    @staticmethod
+    def MobileNeXt(inputs, width_mult=1., **kwargs):
+        stem_channels = 32
+        config = [
+            [96, 2, 2, 1],
+            [144, 1, 6, 1],
+            [192, 2, 6, 3],
+            [288, 2, 6, 3],
+            [384, 1, 6, 4],
+            [576, 2, 6, 4],
+            [960, 1, 6, 2],
+            [1280, 1, 6, 1]
+        ]
+        stem_channels = Model_Structure.mobilenext_make_divisible(int(stem_channels * width_mult), 8)
+        x = tf.keras.layers.Conv2D(filters=stem_channels, kernel_size=3, strides=2, padding='valid', use_bias=False)(
+            inputs)
+        x = tf.keras.layers.BatchNormalization(momentum=0.999, epsilon=1e-3)(x)
+        x = tf.keras.layers.ReLU(6.)(x)
+        in_channels = stem_channels
+        for i, (c, s, r, b) in enumerate(config):
+            out_channels = Model_Structure.mobilenext_make_divisible(int(c * width_mult), 8)
+            for j in range(b):
+                stride = s if j == 0 else 1
+                x = Model_Structure.mobilenext_sandglassblock(x, in_channels, out_channels, stride, r)
+                in_channels = out_channels
+        return x
+
 
 class Models(object):
     @staticmethod
@@ -11070,7 +11136,7 @@ class Models(object):
     @staticmethod
     def captcha_model_num_classes():
         inputs = tf.keras.layers.Input(shape=inputs_shape)
-        x = Get_Model.GhostNet(inputs)
+        x = Get_Model.MobileNetV2(inputs)
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
@@ -11104,10 +11170,10 @@ class Models(object):
     @staticmethod
     def captcha_model_ctc_tiny(training=False):
         inputs = tf.keras.layers.Input(shape=inputs_shape, name='inputs')
-        x = Get_Model.DenseNet(inputs, block=[6, 12, 32, 32])
+        x = Get_Model.NB_DenseNet(inputs, block=[6, 12, 32, 32])
         x = tf.keras.layers.Reshape((x.shape[1] * x.shape[2], x.shape[3]), name='reshape_len')(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(256, return_sequences=True))(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(256, return_sequences=True))(x)
         x = tf.keras.layers.Dense(Settings.settings(), activation=tf.keras.activations.softmax)(x)
         model = tf.keras.Model(inputs, x)
         labels = tf.keras.layers.Input(shape=(CAPTCHA_LENGTH), name='label')
@@ -11298,7 +11364,7 @@ class Models(object):
         x = tf.keras.layers.Dense(50)(x)
         x = tf.keras.layers.Activation('relu')(x)
         x = tf.keras.layers.Dense(6, weights=get_initial_weights(50))(x)
-        interpolated_image = BilinearInterpolation((30,30))([inputs, x])
+        interpolated_image = BilinearInterpolation((30, 30))([inputs, x])
         x = tf.keras.layers.Conv2D(32, (3, 3), padding='same')(interpolated_image)
         x = tf.keras.layers.Activation('relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(x)

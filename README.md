@@ -252,145 +252,47 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 
 ## 2.1项目结构描述
 
-## 文件夹
+```
+|	|-- works								// 工作目录
+|	|	|-- simple							// 二级工作目录
+|	|	|	|-- App_model					// 后端模型保存路径
+|	|	|	|	|-- checkpoint					// 保存检查点
+|	|	|	|-- CSVLogger					// 把训练轮结果数据流到 csv 文件
+|	|	|	|-- inputs						// 测试map所需文件
+|	|	|	|	|-- detection-results		// 模型预测结果
+|	|	|	|	|-- ground-truth			// 便签的结果
+|	|	|	|	|-- images-optional			// 图片文件
+|	|	|	|-- label						// 标签存放路径
+|	|	|	|-- logs						// 保存被 TensorBoard 分析的日志文件
+|	|	|	|-- model						// 模型保存的路径
+|	|	|	|-- output						// 测试map输出文件
+|	|	|	|-- test_dataset				// 测试集路径
+|	|	|	|-- train_dataset				// 训练集路径
+|	|	|	|-- train_pack_dataset			// 保存打包好的训练集
+|	|	|	|-- validation_dataset			// 验证集路径
+|	|	|	|-- vailidation_pack_dataset	// 保存打包好的验证集
+|	|	|	|-- visualization				// 输出网络的类激活热力图
+|	|	|	|-- app.py						// 开启后端
+|	|	|	|-- callback.py					// 回调函数 https://keras.io/zh/callbacks/运行该文件会返回一个损失最小的权重文件
+|	|	|	|-- captcha_config.json			// 生成验证码的配置文件
+|	|	|	|-- cheak_file.py				// 检查数据集图片的高和宽,删除损坏的数据集
+|	|	|	|-- delete_file.py				// 删除所有数据集的文件,这里是防止数据太多手动删不动
+|	|	|	|-- gen_sample_by_captcha.py	// 生成验证码
+|	|	|	|-- init_working_space.py		// 初始化工作目录
+|	|	|	|-- models.py					// 搭建模型网络,可视化需要安装graphviz，官网下载地址为http://www.graphviz.org/
+|	|	|	|-- pack_dataset.py				// 打包数据集
+|	|	|	|-- save_model.py				// 把损失最小的检查点保存成模型
+|	|	|	|-- settings.py					// 设置文件
+|	|	|	|-- spider_example.py			// 爬虫调用例子
+|	|	|	|-- split_dataset.py			// 划分数据集
+|	|	|	|-- test.py						// 读取模型进行测试
+|	|	|	|-- test_map.py					// 测试模型map
+|	|	|	|-- train.py					// 开始训练
+|	|	|	|-- utils.py					// 项目核心
+|	|	|	|-- visualization_cnn.py		// 生成网络的类激活热力图，用于查看网络用什么特征进行预测
+|-- New_work.py								// 新建工作目录
 
-### works
-    工作目录
-
-### App_model
-    后端模型保存路径
-
-### checkpoint
-    保存检查点
-    
-### CSVLogger
-    把训练轮结果数据流到 csv 文件
-    
-### inputs
-    测试map所需文件
-    detection-results 模型预测结果
-    ground-truth      正确结果
-    images-optional   图片文件
-    
-### label
-	标签存放路径
-
-### logs
-    保存被 TensorBoard 分析的日志文件
-
-### model
-    保存模型
-    
-### output
-    测试map输出文件
-    
-### train_dataset
-    保存训练集
-    
-### train_pack_dataset
-    保存打包好的训练集
-    
-### validation_dataset
-    保存验证集
-    
-### vailidation_pack_dataset
-    保存打包好的验证集
-    
-### test_dataset
-    保存测试集
-	
-### visualization
-	保存网络的类激活热力图
-    
-  
-## 文件
-
-### New_work.py
-    新建工作目录
-
-### app.py
-    开启后端
-
-### callback.py
-    回调函数参考
-    [keras中文官网](https://keras.io/zh/callbacks/)
-    运行该文件会返回一个损失最小的权重文件
-    
-### captcha_config.json
-    生成验证码的配置文件
-      "image_suffix": "jpg",生成验证码的后缀
-      "count": 20000,生成验证码的数量
-      "char_count": [4, 5, 6],生成验证码的长度
-      "width": 100,生成验证码的宽度
-      "height": 60，生成验证码的高度
-	  
-### cheak_file.py
-	检查数据集图片的高和宽
-
-### delete_file.py
-    删除所有数据集的文件
-    这里是防止数据太多手动删不动
-    
-### utils.py
-    项目核心，三大类
-    Image_Processing
-    图片处理和标签处理
-    WriteTFRecord
-    打包数据集
-    Predict_Image
-    预测类模型生成后用这个类来预测和部署
-    
-### gen_sample_by_captcha.py
-    生成验证码
-    
-### init_working_space.py
-    初始化工作目录
-    ***注意:此文件只在第一次运行项目时运行***
-    ***因为这会重置checkpoint CSVLogger logs***
-    
-### models.py
-    搭建模型网络，运行会生成model.png，展示模型的结构
-	需要安装graphviz，官网下载地址为[graphviz](http://www.graphviz.org/)
-	
-### split_dataset.py
-	区分数据集
-	
-### num_classes.json
-	运行pack_dataset.py后产生
-	记录网络输出的数字对应哪个值
-	映射表
-    
-### pack_dataset.py
-    打包数据集
-  
-### save_model.py
-    把损失最小的检查点保存成模型
-
-### settings.py
-    项目的设置文件
-    
-### spider_example.py
-    爬虫调用例子
-    返回
-    result 识别结果
-    recognition_rate 每个字符的识别率
-	time 识别时间单位s
-
-### test.py
-    读取模型进行测试
-	
-	Predict.predict_image(image)返回的是PIL图片对象
-	
-	可以用.show()查看处理后的图片
-	
-### test_map.py
-    测试模型map
-
-### train.py
-    开始训练
-	
-### visualization_cnn.py
-	生成网络的类激活热力图，用于查看网络用什么特征进行预测
+```
 
 ## 2.2 细节描述
 ### 目标检测(EFFICIENTDET)
