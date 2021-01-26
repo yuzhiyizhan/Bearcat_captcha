@@ -255,42 +255,42 @@ pip install -r requirements.txt -i https://pypi.douban.com/simple
 ```
 |	|-- works								// 工作目录
 |	|	|-- simple							// 二级工作目录
-|	|	|	|-- App_model					// 后端模型保存路径
+|	|	|	|-- App_model						// 后端模型保存路径
 |	|	|	|	|-- checkpoint					// 保存检查点
-|	|	|	|-- CSVLogger					// 把训练轮结果数据流到 csv 文件
+|	|	|	|-- CSVLogger						// 把训练轮结果数据流到 csv 文件
 |	|	|	|-- inputs						// 测试map所需文件
-|	|	|	|	|-- detection-results		// 模型预测结果
-|	|	|	|	|-- ground-truth			// 便签的结果
-|	|	|	|	|-- images-optional			// 图片文件
+|	|	|	|	|-- detection-results				// 模型预测结果
+|	|	|	|	|-- ground-truth				// 便签的结果
+|	|	|	|	|-- images-optional				// 图片文件
 |	|	|	|-- label						// 标签存放路径
 |	|	|	|-- logs						// 保存被 TensorBoard 分析的日志文件
 |	|	|	|-- model						// 模型保存的路径
 |	|	|	|-- output						// 测试map输出文件
-|	|	|	|-- test_dataset				// 测试集路径
-|	|	|	|-- train_dataset				// 训练集路径
-|	|	|	|-- train_pack_dataset			// 保存打包好的训练集
-|	|	|	|-- validation_dataset			// 验证集路径
-|	|	|	|-- vailidation_pack_dataset	// 保存打包好的验证集
-|	|	|	|-- visualization				// 输出网络的类激活热力图
+|	|	|	|-- test_dataset					// 测试集路径
+|	|	|	|-- train_dataset					// 训练集路径
+|	|	|	|-- train_pack_dataset					// 保存打包好的训练集
+|	|	|	|-- validation_dataset					// 验证集路径
+|	|	|	|-- vailidation_pack_dataset				// 保存打包好的验证集
+|	|	|	|-- visualization					// 输出网络的类激活热力图
 |	|	|	|-- app.py						// 开启后端
-|	|	|	|-- callback.py					// 回调函数 https://keras.io/zh/callbacks/运行该文件会返回一个损失最小的权重文件
-|	|	|	|-- captcha_config.json			// 生成验证码的配置文件
-|	|	|	|-- cheak_file.py				// 检查数据集图片的高和宽,删除损坏的数据集
-|	|	|	|-- delete_file.py				// 删除所有数据集的文件,这里是防止数据太多手动删不动
-|	|	|	|-- gen_sample_by_captcha.py	// 生成验证码
-|	|	|	|-- init_working_space.py		// 初始化工作目录
-|	|	|	|-- models.py					// 搭建模型网络,可视化需要安装graphviz，官网下载地址为http://www.graphviz.org/
-|	|	|	|-- pack_dataset.py				// 打包数据集
-|	|	|	|-- save_model.py				// 把损失最小的检查点保存成模型
-|	|	|	|-- settings.py					// 设置文件
-|	|	|	|-- spider_example.py			// 爬虫调用例子
-|	|	|	|-- split_dataset.py			// 划分数据集
+|	|	|	|-- callback.py						// 回调函数 https://keras.io/zh/callbacks/运行该文件会返回一个损失最小的权重文件
+|	|	|	|-- captcha_config.json					// 生成验证码的配置文件
+|	|	|	|-- cheak_file.py					// 检查数据集图片的高和宽,删除损坏的数据集
+|	|	|	|-- delete_file.py					// 删除所有数据集的文件,这里是防止数据太多手动删不动
+|	|	|	|-- gen_sample_by_captcha.py				// 生成验证码
+|	|	|	|-- init_working_space.py				// 初始化工作目录
+|	|	|	|-- models.py						// 搭建模型网络,可视化需要安装graphviz，官网下载地址为http://www.graphviz.org/
+|	|	|	|-- pack_dataset.py					// 打包数据集
+|	|	|	|-- save_model.py					// 把损失最小的检查点保存成模型
+|	|	|	|-- settings.py						// 设置文件
+|	|	|	|-- spider_example.py					// 爬虫调用例子
+|	|	|	|-- split_dataset.py					// 划分数据集
 |	|	|	|-- test.py						// 读取模型进行测试
-|	|	|	|-- test_map.py					// 测试模型map
-|	|	|	|-- train.py					// 开始训练
-|	|	|	|-- utils.py					// 项目核心
-|	|	|	|-- visualization_cnn.py		// 生成网络的类激活热力图，用于查看网络用什么特征进行预测
-|-- New_work.py								// 新建工作目录
+|	|	|	|-- test_map.py						// 测试模型map
+|	|	|	|-- train.py						// 开始训练
+|	|	|	|-- utils.py						// 项目核心
+|	|	|	|-- visualization_cnn.py				// 生成网络的类激活热力图，用于查看网络用什么特征进行预测
+|-- New_work.py									// 新建工作目录
 
 ```
 
