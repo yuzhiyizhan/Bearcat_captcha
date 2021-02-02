@@ -1,5 +1,4 @@
 import io
-import re
 import os
 import cv2
 import sys
@@ -10,7 +9,6 @@ import glob
 import base64
 import shutil
 import argparse
-import colorsys
 import operator
 import requests
 import numpy as np
@@ -23,7 +21,6 @@ from PIL import ImageFont
 import xml.etree.ElementTree as ET
 from works.simples.settings import PHI
 from works.simples.settings import MODE
-from works.simples.settings import MODEL
 from works.simples.settings import PRUNING
 from works.simples.settings import USE_GPU
 from works.simples.settings import GT_PATH
@@ -33,11 +30,7 @@ from works.simples.settings import MODEL_PATH
 from works.simples.settings import MODEL_NAME
 from works.simples.settings import PRUNING_MODEL_NAME
 from works.simples.utils import Image_Processing
-from tensorflow.keras import backend as K
 from tensorflow.compat.v1.keras import backend as KT
-from works.simples.models import Models
-from works.simples.models import YOLO_anchors
-from works.simples.models import Efficientdet_anchors
 from works.simples.settings import THRESHOLD
 from works.simples.settings import TEST_PATH
 from works.simples.settings import LABEL_PATH
@@ -46,8 +39,7 @@ from works.simples.settings import OUTPUT_PATH
 from works.simples.settings import IMAGE_SIZES
 from works.simples.settings import IMAGE_HEIGHT
 from works.simples.settings import NUMBER_CLASSES_FILE
-from works.simples.settings import IMAGE_CHANNALS
-from concurrent.futures import ThreadPoolExecutor
+from works.simples.utils import Predict_Image
 
 table = []
 for i in range(256):
@@ -90,665 +82,7 @@ else:
     os.environ["CUDA_VISIBLE_DEVICE"] = "-1"
 
 
-class EfficientDet_BBoxUtility(object):
-    def __init__(self, num_classes, priors=None, overlap_threshold=0.5, ignore_threshold=0.4,
-                 nms_thresh=0.3, top_k=400):
-        self.num_classes = num_classes
-        self.priors = priors
-        self.num_priors = 0 if priors is None else len(priors)
-        self.overlap_threshold = overlap_threshold
-        self.ignore_threshold = ignore_threshold
-        self._nms_thresh = nms_thresh
-        self._top_k = top_k
-
-    def _iou(self, b1, b2):
-        b1_x1, b1_y1, b1_x2, b1_y2 = b1[0], b1[1], b1[2], b1[3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = b2[:, 0], b2[:, 1], b2[:, 2], b2[:, 3]
-
-        inter_rect_x1 = np.maximum(b1_x1, b2_x1)
-        inter_rect_y1 = np.maximum(b1_y1, b2_y1)
-        inter_rect_x2 = np.minimum(b1_x2, b2_x2)
-        inter_rect_y2 = np.minimum(b1_y2, b2_y2)
-
-        inter_area = np.maximum(inter_rect_x2 - inter_rect_x1, 0) * np.maximum(inter_rect_y2 - inter_rect_y1, 0)
-
-        area_b1 = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
-        area_b2 = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-
-        iou = inter_area / np.maximum((area_b1 + area_b2 - inter_area), 1e-6)
-        return iou
-
-    def iou(self, box):
-        # 计算出每个真实框与所有的先验框的iou
-        # 判断真实框与先验框的重合情况
-        inter_upleft = np.maximum(self.priors[:, :2], box[:2])
-        inter_botright = np.minimum(self.priors[:, 2:4], box[2:])
-
-        inter_wh = inter_botright - inter_upleft
-        inter_wh = np.maximum(inter_wh, 0)
-        inter = inter_wh[:, 0] * inter_wh[:, 1]
-        # 真实框的面积
-        area_true = (box[2] - box[0]) * (box[3] - box[1])
-        # 先验框的面积
-        area_gt = (self.priors[:, 2] - self.priors[:, 0]) * (self.priors[:, 3] - self.priors[:, 1])
-        # 计算iou
-        union = area_true + area_gt - inter
-
-        iou = inter / union
-        return iou
-
-    def encode_box(self, box, return_iou=True):
-        iou = self.iou(box)
-        encoded_box = np.zeros((self.num_priors, 4 + return_iou))
-
-        # 找到每一个真实框，重合程度较高的先验框
-        assign_mask = iou > self.overlap_threshold
-        if not assign_mask.any():
-            assign_mask[iou.argmax()] = True
-        if return_iou:
-            encoded_box[:, -1][assign_mask] = iou[assign_mask]
-
-        # 找到对应的先验框
-        assigned_priors = self.priors[assign_mask]
-        # 逆向编码，将真实框转化为efficientdet预测结果的格式
-
-        # 先计算真实框的中心与长宽
-        box_center = 0.5 * (box[:2] + box[2:])
-        box_wh = box[2:] - box[:2]
-        # 再计算重合度较高的先验框的中心与长宽
-        assigned_priors_center = 0.5 * (assigned_priors[:, :2] +
-                                        assigned_priors[:, 2:4])
-        assigned_priors_wh = (assigned_priors[:, 2:4] -
-                              assigned_priors[:, :2])
-
-        # 逆向求取efficientdet应该有的预测结果
-        encoded_box[:, :2][assign_mask] = box_center - assigned_priors_center
-        encoded_box[:, :2][assign_mask] /= assigned_priors_wh
-
-        encoded_box[:, 2:4][assign_mask] = np.log(box_wh / assigned_priors_wh)
-        return encoded_box.ravel()
-
-    def ignore_box(self, box):
-        iou = self.iou(box)
-        ignored_box = np.zeros((self.num_priors, 1))
-
-        # 找到每一个真实框，重合程度较高的先验框
-        assign_mask = (iou > self.ignore_threshold) & (iou < self.overlap_threshold)
-
-        if not assign_mask.any():
-            assign_mask[iou.argmax()] = True
-
-        ignored_box[:, 0][assign_mask] = iou[assign_mask]
-        return ignored_box.ravel()
-
-    def assign_boxes(self, boxes):
-        assignment = np.zeros((self.num_priors, 4 + 1 + self.num_classes + 1))
-        assignment[:, 4] = 0.0
-        assignment[:, -1] = 0.0
-        if len(boxes) == 0:
-            return assignment
-        # 对每一个真实框都进行iou计算
-        ingored_boxes = np.apply_along_axis(self.ignore_box, 1, boxes[:, :4])
-        # 取重合程度最大的先验框，并且获取这个先验框的index
-        ingored_boxes = ingored_boxes.reshape(-1, self.num_priors, 1)
-        # (num_priors)
-        ignore_iou = ingored_boxes[:, :, 0].max(axis=0)
-        # (num_priors)
-        ignore_iou_mask = ignore_iou > 0
-
-        assignment[:, 4][ignore_iou_mask] = -1
-        assignment[:, -1][ignore_iou_mask] = -1
-
-        # (n, num_priors, 5)
-        encoded_boxes = np.apply_along_axis(self.encode_box, 1, boxes[:, :4])
-        # 每一个真实框的编码后的值，和iou
-        # (n, num_priors)
-        encoded_boxes = encoded_boxes.reshape(-1, self.num_priors, 5)
-
-        # 取重合程度最大的先验框，并且获取这个先验框的index
-        # (num_priors)
-        best_iou = encoded_boxes[:, :, -1].max(axis=0)
-        # (num_priors)
-        best_iou_idx = encoded_boxes[:, :, -1].argmax(axis=0)
-        # (num_priors)
-        best_iou_mask = best_iou > 0
-        # 某个先验框它属于哪个真实框
-        best_iou_idx = best_iou_idx[best_iou_mask]
-
-        assign_num = len(best_iou_idx)
-        # 保留重合程度最大的先验框的应该有的预测结果
-        # 哪些先验框存在真实框
-        encoded_boxes = encoded_boxes[:, best_iou_mask, :]
-
-        assignment[:, :4][best_iou_mask] = encoded_boxes[best_iou_idx, np.arange(assign_num), :4]
-        # 4代表为背景的概率，为0
-        assignment[:, 4][best_iou_mask] = 1
-        assignment[:, 5:-1][best_iou_mask] = boxes[best_iou_idx, 4:]
-        assignment[:, -1][best_iou_mask] = 1
-        # 通过assign_boxes我们就获得了，输入进来的这张图片，应该有的预测结果是什么样子的
-
-        return assignment
-
-    def decode_boxes(self, mbox_loc, mbox_priorbox):
-        # 获得先验框的宽与高
-        prior_width = mbox_priorbox[:, 2] - mbox_priorbox[:, 0]
-        prior_height = mbox_priorbox[:, 3] - mbox_priorbox[:, 1]
-        # 获得先验框的中心点
-        prior_center_x = 0.5 * (mbox_priorbox[:, 2] + mbox_priorbox[:, 0])
-        prior_center_y = 0.5 * (mbox_priorbox[:, 3] + mbox_priorbox[:, 1])
-
-        # 真实框距离先验框中心的xy轴偏移情况
-        decode_bbox_center_x = mbox_loc[:, 0] * prior_width
-        decode_bbox_center_x += prior_center_x
-        decode_bbox_center_y = mbox_loc[:, 1] * prior_height
-        decode_bbox_center_y += prior_center_y
-
-        # 真实框的宽与高的求取
-        decode_bbox_width = np.exp(mbox_loc[:, 2])
-        decode_bbox_width *= prior_width
-        decode_bbox_height = np.exp(mbox_loc[:, 3])
-        decode_bbox_height *= prior_height
-
-        # 获取真实框的左上角与右下角
-        decode_bbox_xmin = decode_bbox_center_x - 0.5 * decode_bbox_width
-        decode_bbox_ymin = decode_bbox_center_y - 0.5 * decode_bbox_height
-        decode_bbox_xmax = decode_bbox_center_x + 0.5 * decode_bbox_width
-        decode_bbox_ymax = decode_bbox_center_y + 0.5 * decode_bbox_height
-
-        # 真实框的左上角与右下角进行堆叠
-        decode_bbox = np.concatenate((decode_bbox_xmin[:, None],
-                                      decode_bbox_ymin[:, None],
-                                      decode_bbox_xmax[:, None],
-                                      decode_bbox_ymax[:, None]), axis=-1)
-
-        # 防止超出0与1
-        decode_bbox = np.minimum(np.maximum(decode_bbox, 0.0), 1.0)
-        return decode_bbox
-
-    def detection_out(self, predictions, mbox_priorbox, confidence_threshold=0.4):
-        # print(predictions)
-        # 网络预测的结果
-        mbox_loc = predictions[0]
-        # 置信度
-        mbox_conf = predictions[1]
-        # 先验框
-        mbox_priorbox = mbox_priorbox
-
-        results = []
-        # 对每一个图片进行处理
-        for i in range(len(mbox_loc)):
-            decode_bbox = self.decode_boxes(mbox_loc[i], mbox_priorbox)
-
-            bs_class_conf = mbox_conf[i]
-
-            class_conf = np.expand_dims(np.max(bs_class_conf, 1), -1)
-            class_pred = np.expand_dims(np.argmax(bs_class_conf, 1), -1)
-
-            conf_mask = (class_conf >= confidence_threshold)[:, 0]
-
-            detections = np.concatenate((decode_bbox[conf_mask], class_conf[conf_mask], class_pred[conf_mask]), 1)
-            unique_class = np.unique(detections[:, -1])
-
-            best_box = []
-            if len(unique_class) == 0:
-                results.append(best_box)
-                continue
-            # 4、对种类进行循环，
-            # 非极大抑制的作用是筛选出一定区域内属于同一种类得分最大的框，
-            # 对种类进行循环可以帮助我们对每一个类分别进行非极大抑制。
-            for c in unique_class:
-                cls_mask = detections[:, -1] == c
-
-                detection = detections[cls_mask]
-                scores = detection[:, 4]
-                # 5、根据得分对该种类进行从大到小排序。
-                arg_sort = np.argsort(scores)[::-1]
-                detection = detection[arg_sort]
-                while np.shape(detection)[0] > 0:
-                    # 6、每次取出得分最大的框，计算其与其它所有预测框的重合程度，重合程度过大的则剔除。
-                    best_box.append(detection[0])
-                    if len(detection) == 1:
-                        break
-                    ious = self._iou(best_box[-1], detection[1:])
-                    detection = detection[1:][ious < self._nms_thresh]
-            results.append(best_box)
-        # 获得，在所有预测结果里面，置信度比较高的框
-        # 还有，利用先验框和efficientdet的预测结果，处理获得了真实框（预测框）的位置
-        return results
-
-
-class SSD_BBoxUtility(object):
-    def __init__(self, num_classes, priors=None, overlap_threshold=0.5,
-                 nms_thresh=0.45, top_k=400):
-        self.num_classes = num_classes
-        self.priors = priors
-        self.num_priors = 0 if priors is None else len(priors)
-        self.overlap_threshold = overlap_threshold
-        self._nms_thresh = nms_thresh
-        self._top_k = top_k
-
-    def iou(self, box):
-        # 计算出每个真实框与所有的先验框的iou
-        # 判断真实框与先验框的重合情况
-        inter_upleft = np.maximum(self.priors[:, :2], box[:2])
-        inter_botright = np.minimum(self.priors[:, 2:4], box[2:])
-
-        inter_wh = inter_botright - inter_upleft
-        inter_wh = np.maximum(inter_wh, 0)
-        inter = inter_wh[:, 0] * inter_wh[:, 1]
-        # 真实框的面积
-        area_true = (box[2] - box[0]) * (box[3] - box[1])
-        # 先验框的面积
-        area_gt = (self.priors[:, 2] - self.priors[:, 0]) * (self.priors[:, 3] - self.priors[:, 1])
-        # 计算iou
-        union = area_true + area_gt - inter
-
-        iou = inter / union
-        return iou
-
-    def encode_box(self, box, return_iou=True):
-        iou = self.iou(box)
-        encoded_box = np.zeros((self.num_priors, 4 + return_iou))
-
-        # 找到每一个真实框，重合程度较高的先验框
-        assign_mask = iou > self.overlap_threshold
-        if not assign_mask.any():
-            assign_mask[iou.argmax()] = True
-        if return_iou:
-            encoded_box[:, -1][assign_mask] = iou[assign_mask]
-
-        # 找到对应的先验框
-        assigned_priors = self.priors[assign_mask]
-        # 逆向编码，将真实框转化为ssd预测结果的格式
-
-        # 先计算真实框的中心与长宽
-        box_center = 0.5 * (box[:2] + box[2:])
-        box_wh = box[2:] - box[:2]
-        # 再计算重合度较高的先验框的中心与长宽
-        assigned_priors_center = 0.5 * (assigned_priors[:, :2] +
-                                        assigned_priors[:, 2:4])
-        assigned_priors_wh = (assigned_priors[:, 2:4] -
-                              assigned_priors[:, :2])
-
-        # 逆向求取ssd应该有的预测结果
-        encoded_box[:, :2][assign_mask] = box_center - assigned_priors_center
-        encoded_box[:, :2][assign_mask] /= assigned_priors_wh
-        # 除以0.1
-        encoded_box[:, :2][assign_mask] /= assigned_priors[:, -4:-2]
-
-        encoded_box[:, 2:4][assign_mask] = np.log(box_wh / assigned_priors_wh)
-        # 除以0.2
-        encoded_box[:, 2:4][assign_mask] /= assigned_priors[:, -2:]
-        return encoded_box.ravel()
-
-    def assign_boxes(self, boxes):
-        assignment = np.zeros((self.num_priors, 4 + self.num_classes + 8))
-        assignment[:, 4] = 1.0
-        if len(boxes) == 0:
-            return assignment
-        # 对每一个真实框都进行iou计算
-        encoded_boxes = np.apply_along_axis(self.encode_box, 1, boxes[:, :4])
-        # 每一个真实框的编码后的值，和iou
-        encoded_boxes = encoded_boxes.reshape(-1, self.num_priors, 5)
-
-        # 取重合程度最大的先验框，并且获取这个先验框的index
-        best_iou = encoded_boxes[:, :, -1].max(axis=0)
-        best_iou_idx = encoded_boxes[:, :, -1].argmax(axis=0)
-        best_iou_mask = best_iou > 0
-        best_iou_idx = best_iou_idx[best_iou_mask]
-
-        assign_num = len(best_iou_idx)
-        # 保留重合程度最大的先验框的应该有的预测结果
-        encoded_boxes = encoded_boxes[:, best_iou_mask, :]
-        assignment[:, :4][best_iou_mask] = encoded_boxes[best_iou_idx, np.arange(assign_num), :4]
-        # 4代表为背景的概率，为0
-        assignment[:, 4][best_iou_mask] = 0
-        assignment[:, 5:-8][best_iou_mask] = boxes[best_iou_idx, 4:]
-        assignment[:, -8][best_iou_mask] = 1
-        # 通过assign_boxes我们就获得了，输入进来的这张图片，应该有的预测结果是什么样子的
-        return assignment
-
-    def decode_boxes(self, mbox_loc, mbox_priorbox, variances):
-        # 获得先验框的宽与高
-        prior_width = mbox_priorbox[:, 2] - mbox_priorbox[:, 0]
-        prior_height = mbox_priorbox[:, 3] - mbox_priorbox[:, 1]
-        # 获得先验框的中心点
-        prior_center_x = 0.5 * (mbox_priorbox[:, 2] + mbox_priorbox[:, 0])
-        prior_center_y = 0.5 * (mbox_priorbox[:, 3] + mbox_priorbox[:, 1])
-
-        # 真实框距离先验框中心的xy轴偏移情况
-        decode_bbox_center_x = mbox_loc[:, 0] * prior_width * variances[:, 0]
-        decode_bbox_center_x += prior_center_x
-        decode_bbox_center_y = mbox_loc[:, 1] * prior_height * variances[:, 1]
-        decode_bbox_center_y += prior_center_y
-
-        # 真实框的宽与高的求取
-        decode_bbox_width = np.exp(mbox_loc[:, 2] * variances[:, 2])
-        decode_bbox_width *= prior_width
-        decode_bbox_height = np.exp(mbox_loc[:, 3] * variances[:, 3])
-        decode_bbox_height *= prior_height
-
-        # 获取真实框的左上角与右下角
-        decode_bbox_xmin = decode_bbox_center_x - 0.5 * decode_bbox_width
-        decode_bbox_ymin = decode_bbox_center_y - 0.5 * decode_bbox_height
-        decode_bbox_xmax = decode_bbox_center_x + 0.5 * decode_bbox_width
-        decode_bbox_ymax = decode_bbox_center_y + 0.5 * decode_bbox_height
-
-        # 真实框的左上角与右下角进行堆叠
-        decode_bbox = np.concatenate((decode_bbox_xmin[:, None],
-                                      decode_bbox_ymin[:, None],
-                                      decode_bbox_xmax[:, None],
-                                      decode_bbox_ymax[:, None]), axis=-1)
-        # 防止超出0与1
-        decode_bbox = np.minimum(np.maximum(decode_bbox, 0.0), 1.0)
-        return decode_bbox
-
-    def detection_out(self, predictions, background_label_id=0, keep_top_k=200,
-                      confidence_threshold=0.5):
-        # 网络预测的结果
-        mbox_loc = predictions[:, :, :4]
-        # 0.1，0.1，0.2，0.2
-        variances = predictions[:, :, -4:]
-        # 先验框
-        mbox_priorbox = predictions[:, :, -8:-4]
-        # 置信度
-        mbox_conf = predictions[:, :, 4:-8]
-        results = []
-        # 对每一个特征层进行处理
-        for i in range(len(mbox_loc)):
-            results.append([])
-            decode_bbox = self.decode_boxes(mbox_loc[i], mbox_priorbox[i], variances[i])
-
-            for c in range(self.num_classes):
-                if c == background_label_id:
-                    continue
-                c_confs = mbox_conf[i, :, c]
-                c_confs_m = c_confs > confidence_threshold
-                if len(c_confs[c_confs_m]) > 0:
-                    # 取出得分高于confidence_threshold的框
-                    boxes_to_process = decode_bbox[c_confs_m]
-                    confs_to_process = c_confs[c_confs_m]
-                    # 进行iou的非极大抑制
-                    idx = tf.image.non_max_suppression(tf.cast(boxes_to_process, tf.float32),
-                                                       tf.cast(confs_to_process, tf.float32),
-                                                       self._top_k,
-                                                       iou_threshold=self._nms_thresh).numpy()
-                    # 取出在非极大抑制中效果较好的内容
-                    good_boxes = boxes_to_process[idx]
-                    confs = confs_to_process[idx][:, None]
-                    # 将label、置信度、框的位置进行堆叠。
-                    labels = c * np.ones((len(idx), 1))
-                    c_pred = np.concatenate((labels, confs, good_boxes),
-                                            axis=1)
-                    # 添加进result里
-                    results[-1].extend(c_pred)
-            if len(results[-1]) > 0:
-                # 按照置信度进行排序
-                results[-1] = np.array(results[-1])
-                argsort = np.argsort(results[-1][:, 1])[::-1]
-                results[-1] = results[-1][argsort]
-                # 选出置信度最大的keep_top_k个
-                results[-1] = results[-1][:keep_top_k]
-        # 获得，在所有预测结果里面，置信度比较高的框
-        # 还有，利用先验框和ssd的预测结果，处理获得了真实框（预测框）的位置
-        return results
-
-
-class Predict_Image(object):
-    def __init__(self, model_path=None, app=False, classification=False, detection_results=False):
-        self.iou = 0.3
-        self.app = app
-        self.confidence = 0.4
-        self.ssdconfidence = 0.5
-        self.model_path = model_path
-        self.load_model()
-        self.classification = classification
-        self.detection_results = detection_results
-
-        if MODE == 'EFFICIENTDET':
-            self.prior = self._get_prior()
-        elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
-            tf.compat.v1.disable_eager_execution()
-            self.score = 0.5
-            self.sess = KT.get_session()
-            self.anchors = YOLO_anchors.get_anchors()
-
-    def load_model(self):
-        if PRUNING:
-            self.model = tf.lite.Interpreter(model_path=self.model_path)
-            self.model.allocate_tensors()
-        else:
-            self.model = operator.methodcaller(MODEL)(Models)
-            self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
-        logger.debug('加载模型到内存')
-        with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
-            result = f.read()
-        self.num_classes_dict = json.loads(result)
-        self.num_classes_list = list(json.loads(result).values())
-        self.num_classes = len(self.num_classes_list)
-        if MODE == 'EFFICIENTDET' or MODE == 'SSD':
-            if MODE == 'EFFICIENTDET':
-                self.bbox_util = EfficientDet_BBoxUtility(self.num_classes, nms_thresh=self.iou)
-            elif MODE == 'SSD':
-                self.bbox_util = SSD_BBoxUtility(self.num_classes)
-            # 画框设置不同的颜色
-            hsv_tuples = [(x / self.num_classes, 1., 1.)
-                          for x in range(self.num_classes)]
-            self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
-            self.colors = list(
-                map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),
-                    self.colors))
-        elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
-            num_classes = len(self.num_classes_list)
-            # 画框设置不同的颜色
-            hsv_tuples = [(x / self.num_classes, 1., 1.)
-                          for x in range(self.num_classes)]
-            self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
-            self.colors = list(
-                map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),
-                    self.colors))
-
-            # 打乱颜色
-            np.random.seed(10101)
-            np.random.shuffle(self.colors)
-            np.random.seed(None)
-            self.input_image_shape = K.placeholder(shape=(2,))
-
-            self.boxes, self.scores, self.classes = YOLO_anchors.yolo_eval(self.model.output, self.anchors,
-                                                                           num_classes, self.input_image_shape,
-                                                                           score_threshold=self.score,
-                                                                           iou_threshold=self.iou)
-
-    def preprocess_input(self, image):
-        image /= 255
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        image -= mean
-        image /= std
-        return image
-
-    def letterbox_image(self, image, size):
-        iw, ih = image.size
-        w, h = size
-        scale = min(w / iw, h / ih)
-        nw = int(iw * scale)
-        nh = int(ih * scale)
-
-        image = image.resize((nw, nh), Image.BICUBIC)
-        if MODE == 'EFFICIENTDET':
-            new_image = Image.new('RGB', size, (0, 0, 0))
-        elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
-            new_image = Image.new('RGB', size, (128, 128, 128))
-        elif MODE == 'SSD':
-            image = image.resize((nw, nh), Image.BICUBIC)
-            new_image = Image.new('RGB', size, (128, 128, 128))
-            new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-            x_offset, y_offset = (w - nw) // 2 / 300, (h - nh) // 2 / 300
-            return new_image, x_offset, y_offset
-        else:
-            raise ValueError('new_image error')
-        new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-        return new_image
-
-    def ssd_correct_boxes(self, top, left, bottom, right, input_shape, image_shape):
-        new_shape = image_shape * np.min(input_shape / image_shape)
-
-        offset = (input_shape - new_shape) / 2. / input_shape
-        scale = input_shape / new_shape
-
-        box_yx = np.concatenate(((top + bottom) / 2, (left + right) / 2), axis=-1)
-        box_hw = np.concatenate((bottom - top, right - left), axis=-1)
-
-        box_yx = (box_yx - offset) * scale
-        box_hw *= scale
-
-        box_mins = box_yx - (box_hw / 2.)
-        box_maxes = box_yx + (box_hw / 2.)
-        boxes = np.concatenate([
-            box_mins[:, 0:1],
-            box_mins[:, 1:2],
-            box_maxes[:, 0:1],
-            box_maxes[:, 1:2]
-        ], axis=-1)
-        boxes *= np.concatenate([image_shape, image_shape], axis=-1)
-        return boxes
-
-    def efficientdet_correct_boxes(self, top, left, bottom, right, input_shape, image_shape):
-        new_shape = image_shape * np.min(input_shape / image_shape)
-
-        offset = (input_shape - new_shape) / 2. / input_shape
-        scale = input_shape / new_shape
-
-        box_yx = np.concatenate(((top + bottom) / 2, (left + right) / 2), axis=-1)
-        box_hw = np.concatenate((bottom - top, right - left), axis=-1)
-
-        box_yx = (box_yx - offset) * scale
-        box_hw *= scale
-
-        box_mins = box_yx - (box_hw / 2.)
-        box_maxes = box_yx + (box_hw / 2.)
-        boxes = np.concatenate([
-            box_mins[:, 0:1],
-            box_mins[:, 1:2],
-            box_maxes[:, 0:1],
-            box_maxes[:, 1:2]
-        ], axis=-1)
-        boxes *= np.concatenate([image_shape, image_shape], axis=-1)
-        return boxes
-
-    def _get_prior(self):
-        return Efficientdet_anchors.get_anchors(IMAGE_SIZES[PHI])
-
-    def decode_image(self, image):
-        if self.app:
-            image = Image.fromarray(image)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            iw, ih = image.size
-            w, h = IMAGE_WIDTH, IMAGE_HEIGHT
-            scale = min(w / iw, h / ih)
-            nw = int(iw * scale)
-            nh = int(ih * scale)
-            image = image.resize((nw, nh), Image.BICUBIC)
-            if IMAGE_CHANNALS == 3:
-                new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
-                new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-            else:
-                new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
-                new_image = new_image.convert('L')
-                new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-                new_image = new_image.point(table, 'L')
-            image = np.array(new_image, dtype=np.float32)
-            image = np.expand_dims(image, axis=0)
-            image = image / 255.
-            return image
-        else:
-            with open(image, 'rb') as image_file:
-                image = Image.open(image)
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-                iw, ih = image.size
-                w, h = IMAGE_WIDTH, IMAGE_HEIGHT
-                scale = min(w / iw, h / ih)
-                nw = int(iw * scale)
-                nh = int(ih * scale)
-                image = image.resize((nw, nh), Image.BICUBIC)
-                if IMAGE_CHANNALS == 3:
-                    new_image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
-                    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-                else:
-                    new_image = Image.new('P', (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
-                    new_image = new_image.convert('L')
-                    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-                    new_image = new_image.point(table, 'L')
-                image = np.array(new_image, dtype=np.float32)
-                image = np.expand_dims(image, axis=0)
-                image = image / 255.
-                image_file.close()
-                return image
-
-    def decode_label(self, image):
-        path, label = os.path.split(image)
-        label, suffix = os.path.splitext(label)
-        label = re.split('_', label)[0]
-        return label
-
-    def recognition_probability(self, recognition_rate_liat):
-        mean_section = np.mean(recognition_rate_liat)
-        std_section = np.std(recognition_rate_liat)
-        sqrt_section = np.sqrt(len(recognition_rate_liat))
-        min_confidence = mean_section - (2.58 * (std_section / sqrt_section))
-        return min_confidence
-
-    def decode_vector(self, vector, num_classes):
-
-        text_list = []
-        recognition_rate_liat = []
-        if MODE == 'ORDINARY':
-            vector = vector[0]
-            for i in vector:
-                text = num_classes.get(str(np.argmax(i)))
-                if text:
-                    text_list.append(text)
-            text = ''.join(text_list)
-            for i in vector:
-                recognition_rate = np.max(i) / np.sum(np.abs(i))
-                recognition_rate_liat.append(recognition_rate)
-            recognition_rate = self.recognition_probability(recognition_rate_liat)
-            return text, recognition_rate
-        elif MODE == 'NUM_CLASSES':
-            vector = vector[0]
-            text = np.argmax(vector)
-            text = num_classes.get(str(text))
-            recognition_rate = np.max(vector) / np.sum(np.abs(vector))
-            return text, recognition_rate
-        elif MODE == 'CTC':
-            vector = vector[0]
-            for i in vector:
-                text = num_classes.get(str(np.argmax(i)))
-                if text:
-                    text_list.append(text)
-            text = ''.join(text_list)
-            for i in vector:
-                recognition_rate_liat = [np.max(r) / np.sum(np.abs(r)) for r in i]
-            recognition_rate = np.abs(self.recognition_probability(recognition_rate_liat))
-            return text, recognition_rate
-        elif MODE == 'CTC_TINY':
-            # for i in vector[0]:
-            #     texts = num_classes.get(str(np.argmax(i)))
-            #     if texts:
-            #         text_list.append(texts)
-            # text = ''.join(text_list)
-            out = K.get_value(
-                K.ctc_decode(vector, input_length=np.ones(vector.shape[0]) * vector.shape[1], greedy=True)[0][0])
-            text = ''.join([num_classes.get(str(x), '') for x in out[0]])
-            for i in vector:
-                recognition_rate_liat = [np.max(r) / np.sum(np.abs(r)) for r in i]
-            recognition_rate = self.recognition_probability(recognition_rate_liat)
-            return text, recognition_rate
-        else:
-            raise ValueError(f'还没写{MODE}这种预测方法')
-
+class Predict_Images(Predict_Image):
     def predict_image(self, image_path):
         global right_value
         global predicted_value
@@ -784,11 +118,11 @@ class Predict_Image(object):
             results = self.bbox_util.detection_out(preds, self.prior, confidence_threshold=self.confidence)
 
             if len(results[0]) <= 0:
-                if self.detection_results:
-                    _, file_name = os.path.split(image_path)
-                    file_name, _ = os.path.splitext(file_name)
-                    with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
-                        f.write(f'Fail {0} {0} {0} {0} {0}\n')
+                # if self.detection_results:
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'Fail {0} {0} {0} {0} {0}\n')
                 return image
             results = np.array(results)
 
@@ -846,11 +180,11 @@ class Predict_Image(object):
                 label = '{} {:.2f}'.format(predicted_class, score)
                 draw = ImageDraw.Draw(image)
                 label_size = draw.textsize(label, font)
-                if self.detection_results:
-                    _, file_name = os.path.split(image_path)
-                    file_name, _ = os.path.splitext(file_name)
-                    with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
-                        f.write(f'{predicted_class} {score} {left} {top} {right} {bottom}\n')
+                # if self.detection_results:
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'{predicted_class} {score} {left} {top} {right} {bottom}\n')
                 logger.info(label)
                 label = label.encode('utf-8')
                 if top - label_size[1] >= 0:
@@ -956,11 +290,11 @@ class Predict_Image(object):
             preds = self.model(photo).numpy()
             results = self.bbox_util.detection_out(preds, confidence_threshold=self.ssdconfidence)
             if len(results[0]) <= 0:
-                if self.detection_results:
-                    _, file_name = os.path.split(image_path)
-                    file_name, _ = os.path.splitext(file_name)
-                    with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
-                        f.write(f'Fail {0} {0} {0} {0} {0}\n')
+                # if self.detection_results:
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'Fail {0} {0} {0} {0} {0}\n')
                 return image
             det_label = results[0][:, 0]
             det_conf = results[0][:, 1]
@@ -1009,11 +343,11 @@ class Predict_Image(object):
                 label = '{} {:.2f}'.format(predicted_class, score)
                 draw = ImageDraw.Draw(image)
                 label_size = draw.textsize(label, font)
-                if self.detection_results:
-                    _, file_name = os.path.split(image_path)
-                    file_name, _ = os.path.splitext(file_name)
-                    with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
-                        f.write(f'{predicted_class} {score} {left} {top} {right} {bottom}\n')
+                # if self.detection_results:
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'{predicted_class} {score} {left} {top} {right} {bottom}\n')
                 logger.info(label)
                 label = label.encode('utf-8')
 
@@ -1071,187 +405,6 @@ class Predict_Image(object):
             logger.info(f'已识别{right_value}张图片')
             logger.info(f'识别时间为{end_time - start_time}s')
             # return Image.fromarray(image_object[0] * 255)
-
-    def close_session(self):
-        if MODE == 'YOLO' or MODE == 'YOLO_TINY':
-            self.sess.close()
-
-    def api(self, image):
-
-        if MODE == 'EFFICIENTDET':
-            result_list = []
-            recognition_rate_list = []
-            start_time = time.time()
-            image = Image.fromarray(image)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image_shape = np.array(np.shape(image)[0:2])
-
-            crop_img = self.letterbox_image(image, [IMAGE_SIZES[PHI], IMAGE_SIZES[PHI]])
-            photo = np.array(crop_img, dtype=np.float32)
-            # 图片预处理，归一化
-            photo = np.reshape(self.preprocess_input(photo),
-                               [1, IMAGE_SIZES[PHI], IMAGE_SIZES[PHI], 3])
-
-            if PRUNING:
-                model = self.model
-                input_details = model.get_input_details()
-                output_details = model.get_output_details()
-                model.set_tensor(input_details[0]['index'], photo)
-                model.invoke()
-                pred1 = model.get_tensor(output_details[0]['index'])
-                pred2 = model.get_tensor(output_details[1]['index'])
-                preds = (pred2, pred1)
-            else:
-                preds = self.model.predict(photo)
-
-            # 将预测结果进行解码
-            results = self.bbox_util.detection_out(preds, self.prior, confidence_threshold=self.confidence)
-
-            if len(results[0]) <= 0:
-                return {'times': str(time.time() - start_time)}
-            results = np.array(results)
-
-            # 筛选出其中得分高于confidence的框
-            det_label = results[0][:, 5]
-            det_conf = results[0][:, 4]
-            det_xmin, det_ymin, det_xmax, det_ymax = results[0][:, 0], results[0][:, 1], results[0][:, 2], results[0][:,
-                                                                                                           3]
-
-            top_indices = [i for i, conf in enumerate(det_conf) if conf >= self.confidence]
-            top_conf = det_conf[top_indices]
-            top_label_indices = det_label[top_indices].tolist()
-            top_xmin, top_ymin, top_xmax, top_ymax = np.expand_dims(det_xmin[top_indices], -1), np.expand_dims(
-                det_ymin[top_indices], -1), np.expand_dims(det_xmax[top_indices], -1), np.expand_dims(
-                det_ymax[top_indices],
-                -1)
-
-            # 去掉灰条
-            boxes = self.efficientdet_correct_boxes(top_ymin, top_xmin, top_ymax, top_xmax,
-                                                    np.array([IMAGE_SIZES[PHI], IMAGE_SIZES[PHI]]),
-                                                    image_shape)
-
-            def classifications(image, left, top, right, bottom):
-                image_crop = image.crop((left, top, right, bottom))
-                image_bytearr = io.BytesIO()
-                image_crop.save(image_bytearr, format='JPEG')
-                image_bytes = image_bytearr.getvalue()
-                data = {'data': [f'data:image;base64,{base64.b64encode(image_bytes).decode()}']}
-                response = requests.post('http://127.0.0.1:7860/api/predict/', json=data).json()
-                result = json.loads(response.get('data')[0].get('label'))
-                predicted_class = result.get('result')
-                recognition_rate = result.get('recognition_rate')
-                recognition_rate = float(recognition_rate.replace('%', '')) / 100
-                recognition_rate_list.append(recognition_rate)
-                label = {"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}
-                result_list.append(label)
-
-            with ThreadPoolExecutor(max_workers=10) as t:
-                for i, c in enumerate(top_label_indices):
-                    predicted_class = self.num_classes_list[int(c)]
-                    score = top_conf[i]
-                    recognition_rate_list.append(score)
-                    top, left, bottom, right = boxes[i]
-                    top = top - 5
-                    left = left - 5
-                    bottom = bottom + 5
-                    right = right + 5
-
-                    top = max(0, np.floor(top + 0.5).astype('int32'))
-                    left = max(0, np.floor(left + 0.5).astype('int32'))
-                    bottom = min(np.shape(image)[0], np.floor(bottom + 0.5).astype('int32'))
-                    right = min(np.shape(image)[1], np.floor(right + 0.5).astype('int32'))
-
-                    if self.classification:
-                        t.submit(classifications, image, left, top, right, bottom)
-                        # image_crop = image.crop((left, top, right, bottom))
-                        # image_bytearr = io.BytesIO()
-                        # image_crop.save(image_bytearr, format='JPEG')
-                        # image_bytes = image_bytearr.getvalue()
-                        # data = {'data': [f'data:image;base64,{base64.b64encode(image_bytes).decode()}']}
-                        # response = requests.post('http://127.0.0.1:7860/api/predict/', json=data).json()
-                        # result = json.loads(response.get('data')[0].get('label'))
-                        # predicted_class = result.get('result')
-                        # recognition_rate = result.get('recognition_rate')
-                        # recognition_rate = float(recognition_rate.replace('%', '')) / 100
-                        # recognition_rate_list.append(recognition_rate)
-                        # label = {"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}
-                        # result_list.append(label)
-                    else:
-                        label = {"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}
-                        result_list.append(label)
-
-            recognition_rate = self.recognition_probability(recognition_rate_list)
-            end_time = time.time()
-            times = end_time - start_time
-            return {'result': str(result_list), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
-                    'times': str(times)}
-
-        elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
-            result_list = []
-            recognition_rate_list = []
-            start_time = time.time()
-            image = Image.fromarray(image)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            new_image_size = (IMAGE_HEIGHT, IMAGE_WIDTH)
-            boxed_image = self.letterbox_image(image, new_image_size)
-            image_data = np.array(boxed_image, dtype='float32')
-            image_data /= 255.
-            image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
-
-            # 预测结果
-            out_boxes, out_scores, out_classes = self.sess.run(
-                [self.boxes, self.scores, self.classes],
-                feed_dict={
-                    self.model.input: image_data,
-                    self.input_image_shape: [image.size[1], image.size[0]],
-                    KT.learning_phase(): 0
-                })
-
-            for i, c in list(enumerate(out_classes)):
-                predicted_class = self.num_classes_list[c]
-                box = out_boxes[i]
-                score = out_scores[i]
-
-                top, left, bottom, right = box
-                top = top - 5
-                left = left - 5
-                bottom = bottom + 5
-                right = right + 5
-                top = max(0, np.floor(top + 0.5).astype('int32'))
-                left = max(0, np.floor(left + 0.5).astype('int32'))
-                bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-                right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-
-                label = {"label": predicted_class, "xmax": top, "ymax": left, "xmin": bottom, "ymin": right}
-                result_list.append(label)
-                recognition_rate_list.append(score)
-
-            recognition_rate = self.recognition_probability(recognition_rate_list)
-            end_time = time.time()
-            times = end_time - start_time
-            return {'result': str(result_list), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
-                    'times': str(times)}
-
-        else:
-            start_time = time.time()
-            if PRUNING:
-                model = self.model
-                input_details = model.get_input_details()
-                output_details = model.get_output_details()
-                input_data = self.decode_image(image)
-                model.set_tensor(input_details[0]['index'], input_data)
-                model.invoke()
-                vertor = model.get_tensor(output_details[0]['index'])
-            else:
-                model = self.model
-                vertor = model.predict(self.decode_image(image=image))
-            result, recognition_rate = self.decode_vector(vector=vertor, num_classes=self.num_classes_dict)
-            end_time = time.time()
-            times = end_time - start_time
-            return {'result': str(result), 'recognition_rate': str(round(recognition_rate * 100, 2)) + '%',
-                    'times': str(times)}
 
 
 def get_ground_truth(image):
@@ -1314,7 +467,7 @@ if len(os.listdir(DR_PATH)) == 0:
     logger.debug(f'加载模型{model_path}')
     if not os.path.exists(model_path):
         raise OSError(f'{model_path}没有模型')
-    Predict = Predict_Image(model_path=model_path, detection_results=True)
+    Predict = Predict_Images(model_path=model_path)
     for image in test_image_list:
         Predict.predict_image(image)
 

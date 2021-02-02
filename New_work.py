@@ -420,6 +420,7 @@ from {work_path}.{project_name}.settings import MAX_BOXES
 from {work_path}.{project_name}.settings import TEST_PATH
 from {work_path}.{project_name}.settings import LABEL_PATH
 from {work_path}.{project_name}.settings import BASIC_PATH
+from {work_path}.{project_name}.settings import CONFIDENCE
 from {work_path}.{project_name}.settings import IMAGE_WIDTH
 from {work_path}.{project_name}.settings import IMAGE_SIZES
 from {work_path}.{project_name}.settings import DIVIDE_RATO
@@ -1700,6 +1701,7 @@ class YOLO_Predict_Image(object):
         image_data = np.array(boxed_image, dtype='float32')
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
+        self.yolo_model.summary()
         if self.eager:
             input_image_shape = np.expand_dims(np.array([image.size[1], image.size[0]], dtype='float32'), 0)
             out_boxes, out_scores, out_classes = self.yolo_model.predict([image_data, input_image_shape])
@@ -2332,12 +2334,13 @@ class Predict_Image(object):
     def __init__(self, model_path=None, app=False, classification=False):
         self.iou = 0.3
         self.app = app
-        self.confidence = 0.4
-        self.ssdconfidence = 0.5
+        self.confidence = CONFIDENCE
         self.model_path = model_path
+        self.get_parameter()
         self.load_model()
         self.classification = classification
 
+    def get_parameter(self):
         if MODE == 'EFFICIENTDET':
             self.prior = self._get_prior()
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
@@ -2347,19 +2350,19 @@ class Predict_Image(object):
             self.anchors = YOLO_anchors.get_anchors()
 
     def load_model(self):
-        if PRUNING:
-            self.model = tf.lite.Interpreter(model_path=self.model_path)
-            self.model.allocate_tensors()
-        else:
-            self.model = operator.methodcaller(MODEL)(Models)
-            self.model.load_weights(self.model_path)
-        logger.debug('加载模型到内存')
         with open(NUMBER_CLASSES_FILE, 'r', encoding='utf-8') as f:
             result = f.read()
         self.num_classes_dict = json.loads(result)
         self.num_classes_list = list(json.loads(result).values())
         self.num_classes = len(self.num_classes_list)
         if MODE == 'EFFICIENTDET' or MODE == 'SSD':
+            if PRUNING:
+                self.model = tf.lite.Interpreter(model_path=self.model_path)
+                self.model.allocate_tensors()
+            else:
+                self.model = operator.methodcaller(MODEL)(Models)
+                self.model.load_weights(self.model_path)
+            logger.debug('加载模型到内存')
             if MODE == 'EFFICIENTDET':
                 self.bbox_util = EfficientDet_BBoxUtility(self.num_classes, nms_thresh=self.iou)
             elif MODE == 'SSD':
@@ -2372,10 +2375,23 @@ class Predict_Image(object):
                 map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),
                     self.colors))
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
+            num_anchors = len(self.anchors)
             num_classes = len(self.num_classes_list)
             # 画框设置不同的颜色
-            hsv_tuples = [(x / self.num_classes, 1., 1.)
-                          for x in range(self.num_classes)]
+            if MODE == 'YOLO':
+                self.model = Yolo_model.yolo_body(tf.keras.layers.Input(shape=(None, None, 3)), num_anchors // 3,
+                                                  num_classes)
+            elif MODE == 'YOLO_TINY':
+                self.model = Yolo_tiny_model.yolo_body(tf.keras.layers.Input(shape=(None, None, 3)),
+                                                       num_anchors // 2,
+                                                       num_classes)
+            self.model.load_weights(self.model_path, by_name=True, skip_mismatch=True)
+            logger.debug('加载模型到内存')
+            # print('{{}} model, anchors, and classes loaded.'.format(model_path))
+
+            # 画框设置不同的颜色
+            hsv_tuples = [(x / len(self.num_classes_list), 1., 1.)
+                          for x in range(len(self.num_classes_list))]
             self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
             self.colors = list(
                 map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),
@@ -2385,6 +2401,7 @@ class Predict_Image(object):
             np.random.seed(10101)
             np.random.shuffle(self.colors)
             np.random.seed(None)
+
             self.input_image_shape = K.placeholder(shape=(2,))
 
             self.boxes, self.scores, self.classes = YOLO_anchors.yolo_eval(self.model.output, self.anchors,
@@ -2712,6 +2729,7 @@ class Predict_Image(object):
             image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
 
             # 预测结果
+
             out_boxes, out_scores, out_classes = self.sess.run(
                 [self.boxes, self.scores, self.classes],
                 feed_dict={{
@@ -2782,14 +2800,14 @@ class Predict_Image(object):
             photo = tf.keras.applications.imagenet_utils.preprocess_input(
                 np.reshape(photo, [1, IMAGE_HEIGHT, IMAGE_WIDTH, 3]))
             preds = self.model(photo).numpy()
-            results = self.bbox_util.detection_out(preds, confidence_threshold=self.ssdconfidence)
+            results = self.bbox_util.detection_out(preds, confidence_threshold=self.confidence)
             if len(results[0]) <= 0:
                 return image
             det_label = results[0][:, 0]
             det_conf = results[0][:, 1]
             det_xmin, det_ymin, det_xmax, det_ymax = results[0][:, 2], results[0][:, 3], results[0][:, 4], results[0][:,
                                                                                                            5]
-            top_indices = [i for i, conf in enumerate(det_conf) if conf >= self.ssdconfidence]
+            top_indices = [i for i, conf in enumerate(det_conf) if conf >= self.confidence]
             top_conf = det_conf[top_indices]
             top_label_indices = det_label[top_indices].tolist()
             top_xmin, top_ymin, top_xmax, top_ymax = np.expand_dims(det_xmin[top_indices], -1), np.expand_dims(
@@ -3232,6 +3250,7 @@ import glob
 import math
 import json
 import copy
+import typing
 import random
 import collections
 import numpy as np
@@ -4249,6 +4268,327 @@ class SCConv(tf.keras.layers.Layer):
         return config
 
 
+class MultiHeadAttention2(tf.keras.layers.Layer):
+
+    def __init__(
+            self,
+            head_size: int,
+            num_heads: int,
+            output_size: int = None,
+            dropout: float = 0.0,
+            use_projection_bias: bool = True,
+            return_attn_coef: bool = False,
+            kernel_initializer: typing.Union[str, typing.Callable] = "glorot_uniform",
+            kernel_regularizer: typing.Union[str, typing.Callable] = None,
+            kernel_constraint: typing.Union[str, typing.Callable] = None,
+            bias_initializer: typing.Union[str, typing.Callable] = "zeros",
+            bias_regularizer: typing.Union[str, typing.Callable] = None,
+            bias_constraint: typing.Union[str, typing.Callable] = None,
+            **kwargs
+    ):
+        super().__init__(**kwargs)
+
+        if output_size is not None and output_size < 1:
+            raise ValueError("output_size must be a positive number")
+
+        self.head_size = head_size
+        self.num_heads = num_heads
+        self.output_size = output_size
+        self.use_projection_bias = use_projection_bias
+        self.return_attn_coef = return_attn_coef
+
+        self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
+        self.kernel_constraint = tf.keras.constraints.get(kernel_constraint)
+        self.bias_initializer = tf.keras.initializers.get(bias_initializer)
+        self.bias_regularizer = tf.keras.regularizers.get(bias_regularizer)
+        self.bias_constraint = tf.keras.constraints.get(bias_constraint)
+
+        self.dropout = tf.keras.layers.Dropout(dropout)
+        self._droput_rate = dropout
+
+    def build(self, input_shape):
+        num_query_features = input_shape[0][-1]
+        num_key_features = input_shape[1][-1]
+        num_value_features = (
+            input_shape[2][-1] if len(input_shape) > 2 else num_key_features
+        )
+        output_size = (
+            self.output_size if self.output_size is not None else num_value_features
+        )
+
+        self.query_kernel = self.add_weight(
+            name="query_kernel",
+            shape=[num_query_features, self.num_heads, self.head_size],
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint,
+        )
+
+        self.query_bias = self.add_weight(
+            name="query_bias",
+            shape=[self.num_heads, self.head_size],
+            initializer=self.bias_initializer,
+            regularizer=self.bias_regularizer,
+            constraint=self.bias_constraint,
+        )
+
+        self.key_kernel = self.add_weight(
+            name="key_kernel",
+            shape=[num_key_features, self.num_heads, self.head_size],
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint,
+        )
+
+        self.key_bias = self.add_weight(
+            name="key_bias",
+            shape=[self.num_heads, self.head_size],
+            initializer=self.bias_initializer,
+            regularizer=self.bias_regularizer,
+            constraint=self.bias_constraint,
+        )
+
+        self.value_kernel = self.add_weight(
+            name="value_kernel",
+            shape=[num_value_features, self.num_heads, self.head_size],
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint,
+        )
+
+        self.value_bias = self.add_weight(
+            name="value_bias",
+            shape=[self.num_heads, self.head_size],
+            initializer=self.bias_initializer,
+            regularizer=self.bias_regularizer,
+            constraint=self.bias_constraint,
+        )
+
+        self.projection_kernel = self.add_weight(
+            name="out_kernel",
+            shape=[self.num_heads, self.head_size, output_size],
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint,
+        )
+
+        if self.use_projection_bias:
+            self.projection_bias = self.add_weight(
+                name="out_bias",
+                shape=[output_size],
+                initializer=self.bias_initializer,
+                regularizer=self.bias_regularizer,
+                constraint=self.bias_constraint,
+            )
+        else:
+            self.projection_bias = None
+
+        super().build(input_shape)
+
+    def call(self, inputs, training=None, mask=None):
+
+        # einsum nomenclature
+        # ------------------------
+        # N = query elements
+        # M = key/value elements
+        # H = heads
+        # I = input features
+        # O = output features
+
+        query = inputs[0]
+        key = inputs[1]
+        value = inputs[2] if len(inputs) > 2 else key
+
+        # verify shapes
+        if key.shape[-2] != value.shape[-2]:
+            raise ValueError(
+                "the number of elements in 'key' must be equal to the same as the number of elements in 'value'"
+            )
+
+        if mask is not None:
+            if len(mask.shape) < 2:
+                raise ValueError("'mask' must have atleast 2 dimensions")
+            if query.shape[-2] != mask.shape[-2]:
+                raise ValueError(
+                    "mask's second to last dimension must be equal to the number of elements in 'query'"
+                )
+            if key.shape[-2] != mask.shape[-1]:
+                raise ValueError(
+                    "mask's last dimension must be equal to the number of elements in 'key'"
+                )
+
+        # Linear transformations
+        query = tf.einsum("...NI , IHO -> ...NHO", query, self.query_kernel) + self.query_bias
+        key = tf.einsum("...MI , IHO -> ...MHO", key, self.key_kernel) + self.key_bias
+        value = tf.einsum("...MI , IHO -> ...MHO", value, self.value_kernel) + self.value_bias
+
+        # Scale dot-product, doing the division to either query or key
+        # instead of their product saves some computation
+        depth = tf.constant(self.head_size, dtype=tf.float32)
+        query /= tf.sqrt(depth)
+
+        # Calculate dot product attention
+        logits = tf.einsum("...NHO,...MHO->...HNM", query, key)
+
+        # apply mask
+        if mask is not None:
+            mask = tf.cast(mask, tf.float32)
+
+            # possibly expand on the head dimension so broadcasting {work_path}
+            if len(mask.shape) != len(logits.shape):
+                mask = tf.expand_dims(mask, -3)
+
+            logits += -10e9 * (1.0 - mask)
+
+        attn_coef = tf.nn.softmax(logits)
+
+        # attention dropout
+        attn_coef_dropout = self.dropout(attn_coef, training=training)
+
+        # attention * value
+        multihead_output = tf.einsum("...HNM,...MHI->...NHI", attn_coef_dropout, value)
+
+        # Run the outputs through another linear projection layer. Recombining heads
+        # is automatically done.
+        output = tf.einsum(
+            "...NHI,HIO->...NO", multihead_output, self.projection_kernel
+        )
+
+        if self.projection_bias is not None:
+            output += self.projection_bias
+
+        if self.return_attn_coef:
+            return output, attn_coef
+        else:
+            return output
+
+    def compute_output_shape(self, input_shape):
+        num_value_features = (
+            input_shape[2][-1] if len(input_shape) > 2 else input_shape[1][-1]
+        )
+        output_size = (
+            self.output_size if self.output_size is not None else num_value_features
+        )
+
+        output_shape = input_shape[0][:-1] + (output_size,)
+
+        if self.return_attn_coef:
+            num_query_elements = input_shape[0][-2]
+            num_key_elements = input_shape[1][-2]
+            attn_coef_shape = input_shape[0][:-2] + (
+                self.num_heads,
+                num_query_elements,
+                num_key_elements,
+            )
+
+            return output_shape, attn_coef_shape
+        else:
+            return output_shape
+
+    def get_config(self):
+        config = super().get_config()
+
+        config.update(
+            head_size=self.head_size,
+            num_heads=self.num_heads,
+            output_size=self.output_size,
+            dropout=self._droput_rate,
+            use_projection_bias=self.use_projection_bias,
+            return_attn_coef=self.return_attn_coef,
+            kernel_initializer=tf.keras.initializers.serialize(self.kernel_initializer),
+            kernel_regularizer=tf.keras.regularizers.serialize(self.kernel_regularizer),
+            kernel_constraint=tf.keras.constraints.serialize(self.kernel_constraint),
+            bias_initializer=tf.keras.initializers.serialize(self.bias_initializer),
+            bias_regularizer=tf.keras.regularizers.serialize(self.bias_regularizer),
+            bias_constraint=tf.keras.constraints.serialize(self.bias_constraint),
+        )
+
+        return config
+
+
+class MLPLayer(tf.keras.layers.Layer):
+
+    def __init__(self, image_size, patch_size):
+        super(MLPLayer, self).__init__()
+        p = patch_size
+        c = image_size[2]
+        embeded_dim = c * p ** 2
+        self.layer1 = tf.keras.layers.Dense(4 * embeded_dim, activation=tfa.activations.gelu, name='Dense_0')
+        self.dropout1 = tf.keras.layers.Dropout(0.1)
+        self.layer2 = tf.keras.layers.Dense(embeded_dim, name='Dense_1')
+        self.dropout2 = tf.keras.layers.Dropout(0.1)
+
+    def call(self, x):
+        x = self.layer1(x)
+        x = self.dropout1(x)
+        x = self.layer2(x)
+        return self.dropout2(x)
+
+
+class TransformerInputConv2DLayer(tf.keras.layers.Layer):
+
+    def __init__(self, image_size=None, patch_size=None):
+        super(TransformerInputConv2DLayer, self).__init__(name='Transformer/posembed_input')
+        self.p = patch_size
+        self.h = image_size[0]
+        self.w = image_size[1]
+        self.c = image_size[2]
+        self.n = (int)(self.h * self.w / self.p ** 2)
+        self.embeded_dim = self.c * self.p ** 2
+
+        self.class_embedding = self.add_weight("cls", shape=(1, 1, self.embeded_dim), trainable=True)
+        self.position_embedding = self.add_weight("position_embedding", shape=(1, self.n + 1, self.embeded_dim),
+                                                  trainable=True)
+        self.linear_projection = tf.keras.layers.Conv2D(self.embeded_dim, self.p, strides=(self.p, self.p),
+                                                        padding='valid',
+                                                        name='embedding')
+        self.dropout = tf.keras.layers.Dropout(0.1)
+
+    def call(self, x):
+        batch_size = x.shape[0]
+
+        if batch_size is None:
+            batch_size = -1
+
+        x = self.linear_projection(x)
+        n, h, w, c = x.shape
+        reshaped_image_patches = tf.reshape(x, [n, h * w, c])
+
+        class_embedding = tf.broadcast_to(self.class_embedding, [batch_size, 1, self.embeded_dim])
+        reshaped_image_patches = tf.concat([class_embedding, reshaped_image_patches], axis=1)
+        reshaped_image_patches += self.position_embedding
+        reshaped_image_patches = self.dropout(reshaped_image_patches)
+        x = reshaped_image_patches
+
+        return x
+
+
+class TransformerEncoderLayer(tf.keras.layers.Layer):
+
+    def __init__(self, name, image_size, patch_size, num_heads):
+        super(TransformerEncoderLayer, self).__init__(name=name)
+        p = patch_size
+        c = image_size[2]
+        self.embeded_dim = c * p ** 2
+        head_size = (int)(self.embeded_dim / num_heads)
+        self.layer_normalization1 = tf.keras.layers.LayerNormalization(name='LayerNorm_0')
+        self.multi_head_attention = MultiHeadAttention2(head_size, num_heads)
+        self.dropout = tf.keras.layers.Dropout(0.1)
+        self.layer_normalization2 = tf.keras.layers.LayerNormalization(name='LayerNorm_2')
+        self.mlp_layer = MLPLayer(image_size, patch_size)
+
+    def call(self, x):
+        input_x = x
+        x = self.layer_normalization1(x)
+        x = self.multi_head_attention([x, x])
+        x = self.dropout(x)
+        x = x + input_x
+        y = self.layer_normalization2(x)
+        y = self.mlp_layer(y)
+        return x + y
+
+
 class Transformer_mask(object):
     @staticmethod
     def get_angles(pos, i, d_model):
@@ -4822,51 +5162,72 @@ class Yolo_Loss(object):
         # 一共有三层
         num_layers = len(anchors) // 3
 
-        # 将预测结果和实际ground truth分开，args是[*model_body.output, *y_true]
-        # y_true是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
-        # yolo_outputs是一个列表，包含三个特征层，shape分别为(m,13,13,255),(m,26,26,255),(m,52,52,255)。
+        # ---------------------------------------------------------------------------------------------------#
+        #   将预测结果和实际ground truth分开，args是[*model_body.output, *y_true]
+        #   y_true是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
+        #   yolo_outputs是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
+        # ---------------------------------------------------------------------------------------------------#
         y_true = args[num_layers:]
         yolo_outputs = args[:num_layers]
 
-        # 先验框
-        # 678为142,110,  192,243,  459,401
-        # 345为36,75,  76,55,  72,146
-        # 012为12,16,  19,36,  40,28
+        # -----------------------------------------------------------#
+        #   13x13的特征层对应的anchor是[142, 110], [192, 243], [459, 401]
+        #   26x26的特征层对应的anchor是[36, 75], [76, 55], [72, 146]
+        #   52x52的特征层对应的anchor是[12, 16], [19, 36], [40, 28]
+        # -----------------------------------------------------------#
         anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]] if num_layers == 3 else [[3, 4, 5], [1, 2, 3]]
 
-        # 得到input_shpae为608,608
+        # 得到input_shpae为416,416
         input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))
 
         loss = 0
+        num_pos = 0
 
-        # 取出每一张图片
-        # m的值就是batch_size
+        # -----------------------------------------------------------#
+        #   取出每一张图片
+        #   m的值就是batch_size
+        # -----------------------------------------------------------#
         m = K.shape(yolo_outputs[0])[0]
         mf = K.cast(m, K.dtype(yolo_outputs[0]))
 
-        # y_true是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
-        # yolo_outputs是一个列表，包含三个特征层，shape分别为(m,13,13,255),(m,26,26,255),(m,52,52,255)。
+        # ---------------------------------------------------------------------------------------------------#
+        #   y_true是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
+        #   yolo_outputs是一个列表，包含三个特征层，shape分别为(m,13,13,3,85),(m,26,26,3,85),(m,52,52,3,85)。
+        # ---------------------------------------------------------------------------------------------------#
         for l in range(num_layers):
-            # 以第一个特征层(m,13,13,3,85)为例子
-            # 取出该特征层中存在目标的点的位置。(m,13,13,3,1)
+            # -----------------------------------------------------------#
+            #   以第一个特征层(m,13,13,3,85)为例子
+            #   取出该特征层中存在目标的点的位置。(m,13,13,3,1)
+            # -----------------------------------------------------------#
             object_mask = y_true[l][..., 4:5]
-            # 取出其对应的种类(m,13,13,3,80)
+            # -----------------------------------------------------------#
+            #   取出其对应的种类(m,13,13,3,80)
+            # -----------------------------------------------------------#
             true_class_probs = y_true[l][..., 5:]
             if label_smoothing:
                 true_class_probs = Yolo_Loss._smooth_labels(true_class_probs, label_smoothing)
 
-            # 将yolo_outputs的特征层输出进行处理
-            # grid为网格结构(13,13,1,2)，raw_pred为尚未处理的预测结果(m,13,13,3,85)
-            # 还有解码后的xy，wh，(m,13,13,3,2)
+            # -----------------------------------------------------------#
+            #   将yolo_outputs的特征层输出进行处理、获得四个返回值
+            #   其中：
+            #   grid        (13,13,1,2) 网格坐标
+            #   raw_pred    (m,13,13,3,85) 尚未处理的预测结果
+            #   pred_xy     (m,13,13,3,2) 解码后的中心坐标
+            #   pred_wh     (m,13,13,3,2) 解码后的宽高坐标
+            # -----------------------------------------------------------#
             grid, raw_pred, pred_xy, pred_wh = Yolo_Loss.yolo_head(yolo_outputs[l],
                                                                    anchors[anchor_mask[l]], num_classes, input_shape,
                                                                    calc_loss=True)
 
-            # 这个是解码后的预测的box的位置
-            # (m,13,13,3,4)
+            # -----------------------------------------------------------#
+            #   pred_box是解码后的预测的box的位置
+            #   (m,13,13,3,4)
+            # -----------------------------------------------------------#
             pred_box = K.concatenate([pred_xy, pred_wh])
 
-            # 找到负样本群组，第一步是创建一个数组，[]
+            # -----------------------------------------------------------#
+            #   找到负样本群组，第一步是创建一个数组，[]
+            # -----------------------------------------------------------#
             ignore_mask = tf.TensorArray(K.dtype(y_true[0]), size=1, dynamic_size=True)
             object_mask_bool = K.cast(object_mask, 'bool')
 
@@ -4902,25 +5263,24 @@ class Yolo_Loss(object):
             raw_true_box = y_true[l][..., 0:4]
             ciou = Yolo_Loss.box_ciou(pred_box, raw_true_box)
             ciou_loss = object_mask * box_loss_scale * (1 - ciou)
-            ciou_loss = K.sum(ciou_loss) / mf
-            location_loss = ciou_loss
-
-            # 如果该位置本来有框，那么计算1与置信度的交叉熵
-            # 如果该位置本来没有框，而且满足best_iou<ignore_thresh，则被认定为负样本
-            # best_iou<ignore_thresh用于限制负样本数量
             confidence_loss = object_mask * K.binary_crossentropy(object_mask, raw_pred[..., 4:5], from_logits=True) + (
                     1 - object_mask) * K.binary_crossentropy(object_mask, raw_pred[..., 4:5],
                                                              from_logits=True) * ignore_mask
 
             class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[..., 5:], from_logits=True)
 
-            confidence_loss = K.sum(confidence_loss) / mf
-            class_loss = K.sum(class_loss) / mf
-            location_loss = K.sum(location_loss) / mf
-            confidence_loss = K.sum(confidence_loss) / mf
-            class_loss = K.sum(class_loss) / mf
+            location_loss = K.sum(tf.where(tf.math.is_nan(ciou_loss), tf.zeros_like(ciou_loss), ciou_loss))
+            confidence_loss = K.sum(
+                tf.where(tf.math.is_nan(confidence_loss), tf.zeros_like(confidence_loss), confidence_loss))
+            class_loss = K.sum(tf.where(tf.math.is_nan(class_loss), tf.zeros_like(class_loss), class_loss))
+            # -----------------------------------------------------------#
+            #   计算正样本数量
+            # -----------------------------------------------------------#
+            num_pos += tf.maximum(K.sum(K.cast(object_mask, tf.float32)), 1)
             loss += location_loss + confidence_loss + class_loss
+
         loss = K.expand_dims(loss, axis=-1)
+        loss = loss / num_pos
         return loss
 
 
@@ -4928,23 +5288,26 @@ class YOLO_anchors(object):
     @staticmethod
     def get_anchors():
         if not os.path.exists(ANCHORS_PATH):
-            SIZE = IMAGE_HEIGHT
+            # SIZE = IMAGE_HEIGHT
             if MODE == 'YOLO':
-                anchors_num = 9
+                # anchors_num = 9
+                anchors = [[12, 16], [19, 36], [40, 28], [36, 75], [76, 55], [72, 146], [142, 110], [192, 243],
+                           [459, 401]]
             elif MODE == 'YOLO_TINY':
-                anchors_num = 6
+                # anchors_num = 6
+                anchors = [[10, 14], [23, 27], [37, 58], [81, 82], [135, 169], [344, 319]]
             else:
                 raise ValueError('anchors_num error')
-            data = YOLO_anchors.load_data()
-            # out = YOLO_anchors.kmeans(data, anchors_num)
-            out = AnchorGenerator(anchors_num).generate_anchor(data)
-            out = out[np.argsort(out[:, 0])]
-            data = out * SIZE
-            row = np.shape(data)[0]
-            anchors = []
-            for i in range(row):
-                x_y = [int(data[i][0]), int(data[i][1])]
-                anchors.append(x_y)
+            # data = YOLO_anchors.load_data()
+            #
+            # out = AnchorGenerator(anchors_num).generate_anchor(data)
+            # out = out[np.argsort(out[:, 0])]
+            # data = out * SIZE
+            # row = np.shape(data)[0]
+            # anchors = []
+            # for i in range(row):
+            #     x_y = [int(data[i][0]), int(data[i][1])]
+            #     anchors.append(x_y)
             save_dict = {{'anchors': anchors}}
             with open(ANCHORS_PATH, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(save_dict, ensure_ascii=False))
@@ -4958,9 +5321,9 @@ class YOLO_anchors(object):
     def load_data():
         data = []
         # 对于每一个xml都寻找box
-        try:
-            label_list = glob.glob(f'{{LABEL_PATH}}\*\*.xml')
-        except:
+
+        label_list = glob.glob(f'{{LABEL_PATH}}\*\*.xml')
+        if not label_list:
             label_list = glob.glob(f'{{LABEL_PATH}}\*.xml')
         for xml_file in label_list:
             tree = ET.parse(xml_file)
@@ -11140,6 +11503,14 @@ class Models(object):
         x = tf.keras.layers.GlobalAveragePooling2D()(x)
         outputs = tf.keras.layers.Dense(units=Settings.settings_num_classes(),
                                         activation=tf.keras.activations.softmax)(x)
+        # inputs = tf.keras.layers.Input(shape=inputs_shape, batch_size=1)
+        # x = TransformerInputConv2DLayer(inputs_shape, 16)(inputs)
+        # for i in range(12):
+        #     x = TransformerEncoderLayer(f'Transformer/encoderblock_{{i}}', inputs_shape, 16,
+        #                                 12)(x)
+        # x = tf.keras.layers.LayerNormalization(name='encoder_norm')(x)
+        # outputs = tf.keras.layers.Dense(Settings.settings_num_classes(), name='head')(x[:, 0])
+
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         # for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
         model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
@@ -11589,7 +11960,7 @@ class Models(object):
 
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
-        model = Models.captcha_model()
+        model = Models.captcha_model_yolo_tiny()
         model.summary()
         # for i, n in enumerate(model.layers):
         #     logger.debug(f'{{i}} {{n.name}}')
@@ -11762,6 +12133,9 @@ PHI = 0
 
 # 图片尺寸
 IMAGE_SIZES = [512, 640, 768, 896, 1024, 1280, 1408, 1536]
+
+# 置信度阈值低于此值的框会忽略
+CONFIDENCE = 0.5
 
 ## 模型设置
 # 定义模型的方法,模型在models.py定义
@@ -12055,7 +12429,7 @@ else:
     os.environ["CUDA_VISIBLE_DEVICE"] = "-1"
 
 if MODE == 'YOLO' or MODE == 'YOLO_TINY':
-    with tf.device('/cpu:0'):
+    for _ in range(EPOCHS):
         train_image = Image_Processing.extraction_image(TRAIN_PATH)
         random.shuffle(train_image)
         validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
@@ -12064,59 +12438,60 @@ if MODE == 'YOLO' or MODE == 'YOLO_TINY':
         train_label = Image_Processing.extraction_label(train_image)
         validation_label = Image_Processing.extraction_label(validation_image)
 
-    logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
-    try:
-        logs = pd.read_csv(CSV_PATH)
-        data = logs.iloc[-1]
-        initial_epoch = int(data.get('epoch')) + 1
-    except:
-        initial_epoch = 0
+        logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
+        try:
+            logs = pd.read_csv(CSV_PATH)
+            data = logs.iloc[-1]
+            initial_epoch = int(data.get('epoch')) + 1
+        except:
+            initial_epoch = 0
 
-    anchors = YOLO_anchors.get_anchors()
+        anchors = YOLO_anchors.get_anchors()
 
-    model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
-    model.summary()
-    if validation_image:
-        model.fit(
-            YOLO_Generator().data_generator(train_image, train_label, BATCH_SIZE, (IMAGE_HEIGHT, IMAGE_WIDTH), anchors,
-                                            Settings.settings_num_classes(), mosaic=MOSAIC),
-            steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-            validation_data=YOLO_Generator().data_generator(validation_image, validation_label, BATCH_SIZE,
-                                                            (IMAGE_HEIGHT, IMAGE_WIDTH), anchors,
-                                                            Settings.settings_num_classes(), mosaic=MOSAIC),
-            validation_steps=max(1, len(validation_image) // BATCH_SIZE),
-            initial_epoch=initial_epoch,
-            epochs=EPOCHS,
-            max_queue_size=1,
-            verbose=2,
-            callbacks=c_callback)
-    else:
-        logger.debug('没有验证集')
-        model.fit(
-            YOLO_Generator().data_generator(train_image, train_label, BATCH_SIZE, (IMAGE_HEIGHT, IMAGE_WIDTH), anchors,
-                                            Settings.settings_num_classes(), mosaic=MOSAIC),
-            steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
-            initial_epoch=initial_epoch,
-            epochs=EPOCHS,
-            max_queue_size=1,
-            verbose=2,
-            callbacks=c_callback)
-    save_model_path = cheak_path(os.path.join(MODEL_PATH, MODEL_NAME))
-
-    model.save(save_model_path, save_format='tf')
+        model, c_callback = CallBack.callback(operator.methodcaller(MODEL)(Models))
+        model.summary()
+        if validation_image:
+            model.fit(
+                YOLO_Generator().data_generator(train_image, train_label, BATCH_SIZE, (IMAGE_HEIGHT, IMAGE_WIDTH),
+                                                anchors,
+                                                Settings.settings_num_classes(), mosaic=MOSAIC),
+                steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
+                validation_data=YOLO_Generator().data_generator(validation_image, validation_label, BATCH_SIZE,
+                                                                (IMAGE_HEIGHT, IMAGE_WIDTH), anchors,
+                                                                Settings.settings_num_classes(), mosaic=MOSAIC),
+                validation_steps=max(1, len(validation_image) // BATCH_SIZE),
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
+                max_queue_size=1,
+                verbose=2,
+                callbacks=c_callback)
+        else:
+            logger.debug('没有验证集')
+            model.fit(
+                YOLO_Generator().data_generator(train_image, train_label, BATCH_SIZE, (IMAGE_HEIGHT, IMAGE_WIDTH),
+                                                anchors,
+                                                Settings.settings_num_classes(), mosaic=MOSAIC),
+                steps_per_epoch=max(1, len(train_image) // BATCH_SIZE),
+                initial_epoch=initial_epoch,
+                epochs=initial_epoch + 1,
+                max_queue_size=1,
+                verbose=2,
+                callbacks=c_callback)
+    # save_model_path = cheak_path(os.path.join(MODEL_PATH, MODEL_NAME))
+    #
+    # model.save(save_model_path, save_format='tf')
 
 
 elif MODE == 'EFFICIENTDET':
 
     for _ in range(EPOCHS):
-        with tf.device('/cpu:0'):
-            train_image = Image_Processing.extraction_image(TRAIN_PATH)
-            random.shuffle(train_image)
-            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-            test_image = Image_Processing.extraction_image(TEST_PATH)
-            Image_Processing.extraction_label(train_image + validation_image + test_image)
-            train_label = Image_Processing.extraction_label(train_image)
-            validation_label = Image_Processing.extraction_label(validation_image)
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
+        random.shuffle(train_image)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
+        Image_Processing.extraction_label(train_image + validation_image + test_image)
+        train_label = Image_Processing.extraction_label(train_image)
+        validation_label = Image_Processing.extraction_label(validation_image)
 
         logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
 
@@ -12159,14 +12534,14 @@ elif MODE == 'EFFICIENTDET':
 elif MODE == 'SSD':
 
     for _ in range(EPOCHS):
-        with tf.device('/cpu:0'):
-            train_image = Image_Processing.extraction_image(TRAIN_PATH)
-            random.shuffle(train_image)
-            validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
-            test_image = Image_Processing.extraction_image(TEST_PATH)
-            Image_Processing.extraction_label(train_image + validation_image + test_image)
-            train_label = Image_Processing.extraction_label(train_image)
-            validation_label = Image_Processing.extraction_label(validation_image)
+
+        train_image = Image_Processing.extraction_image(TRAIN_PATH)
+        random.shuffle(train_image)
+        validation_image = Image_Processing.extraction_image(VALIDATION_PATH)
+        test_image = Image_Processing.extraction_image(TEST_PATH)
+        Image_Processing.extraction_label(train_image + validation_image + test_image)
+        train_label = Image_Processing.extraction_label(train_image)
+        validation_label = Image_Processing.extraction_label(validation_image)
 
         logger.info(f'一共有{{int(len(Image_Processing.extraction_image(TRAIN_PATH)) / BATCH_SIZE)}}个batch')
 
