@@ -2345,7 +2345,7 @@ class Predict_Image(object):
             self.prior = self._get_prior()
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
             tf.compat.v1.disable_eager_execution()
-            self.score = 0.5
+            self.score = CONFIDENCE
             self.sess = KT.get_session()
             self.anchors = YOLO_anchors.get_anchors()
 
@@ -2735,9 +2735,10 @@ class Predict_Image(object):
                 feed_dict={{
                     self.model.input: image_data,
                     self.input_image_shape: [image.size[1], image.size[0]],
-                    KT.learning_phase(): 0
+                    # KT.learning_phase(): 0
                 }})
-
+            if len(out_boxes) <= 0:
+                return image
             # logger.debug('Found {{}} boxes for {{}}'.format(len(out_boxes), 'img'))
             # 设置字体
             font = ImageFont.truetype(font='simhei.ttf',
@@ -3046,8 +3047,10 @@ class Predict_Image(object):
                 feed_dict={{
                     self.model.input: image_data,
                     self.input_image_shape: [image.size[1], image.size[0]],
-                    KT.learning_phase(): 0
+                    # KT.learning_phase(): 0
                 }})
+            if len(out_boxes) <= 0:
+                return {{'times': str(time.time() - start_time)}}
 
             for i, c in list(enumerate(out_classes)):
                 predicted_class = self.num_classes_list[c]

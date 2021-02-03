@@ -30,7 +30,6 @@ from works.simples.settings import MODEL_PATH
 from works.simples.settings import MODEL_NAME
 from works.simples.settings import PRUNING_MODEL_NAME
 from works.simples.utils import Image_Processing
-from tensorflow.compat.v1.keras import backend as KT
 from works.simples.settings import THRESHOLD
 from works.simples.settings import TEST_PATH
 from works.simples.settings import LABEL_PATH
@@ -42,6 +41,7 @@ from works.simples.settings import NUMBER_CLASSES_FILE
 from works.simples.utils import Predict_Image
 
 table = []
+mean_time = []
 for i in range(256):
     if i < THRESHOLD:
         table.append(0)
@@ -51,7 +51,7 @@ for i in range(256):
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 显示中文标签
 plt.rcParams['axes.unicode_minus'] = False  # 这两行需要手动设置
 
-if MODE == 'EFFICIENTDET' or MODE == 'SSD':
+if MODE == 'EFFICIENTDET' or MODE == 'SSD' or MODE == 'YOLO_TINY' or MODE == 'YOLO':
     pass
 else:
     raise ValueError('不是目标检测任务无法测试Map')
@@ -84,6 +84,7 @@ else:
 
 class Predict_Images(Predict_Image):
     def predict_image(self, image_path):
+        global mean_time
         global right_value
         global predicted_value
         start_time = time.time()
@@ -206,73 +207,143 @@ class Predict_Images(Predict_Image):
             logger.info(f'总体置信度为{round(self.recognition_probability(recognition_rate_list), 2) * 100}%')
             return image
 
+
         elif MODE == 'YOLO' or MODE == 'YOLO_TINY':
+
             if self.app:
+
                 image = Image.fromarray(image_path)
+
             else:
+
                 image = Image.open(image_path)
+
             if image.mode != 'RGB':
                 image = image.convert('RGB')
+
             new_image_size = (IMAGE_HEIGHT, IMAGE_WIDTH)
+
             boxed_image = self.letterbox_image(image, new_image_size)
+
             image_data = np.array(boxed_image, dtype='float32')
+
             image_data /= 255.
+
             image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
 
             # 预测结果
+
             out_boxes, out_scores, out_classes = self.sess.run(
+
                 [self.boxes, self.scores, self.classes],
+
                 feed_dict={
+
                     self.model.input: image_data,
+
                     self.input_image_shape: [image.size[1], image.size[0]],
-                    KT.learning_phase(): 0
+
+                    # KT.learning_phase(): 0
+
                 })
 
+            if len(out_boxes) <= 0:
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'Fail {0} {0} {0} {0} {0}\n')
+                return image
+
             # logger.debug('Found {} boxes for {}'.format(len(out_boxes), 'img'))
+
             # 设置字体
+
             font = ImageFont.truetype(font='simhei.ttf',
+
                                       size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
+
             thickness = (image.size[0] + image.size[1]) // 300
 
             for i, c in list(enumerate(out_classes)):
+
                 predicted_class = self.num_classes_list[c]
+
                 box = out_boxes[i]
+
                 score = out_scores[i]
+
                 recognition_rate_list.append(score)
+
                 top, left, bottom, right = box
+
                 top = top - 5
+
                 left = left - 5
+
                 bottom = bottom + 5
+
                 right = right + 5
+
                 top = max(0, np.floor(top + 0.5).astype('int32'))
+
                 left = max(0, np.floor(left + 0.5).astype('int32'))
+
                 bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
+
                 right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
 
                 # 画框框
+
                 label = '{} {:.2f}'.format(predicted_class, score)
+
                 draw = ImageDraw.Draw(image)
+
                 label_size = draw.textsize(label, font)
-                logger.debug(label)
+
+                _, file_name = os.path.split(image_path)
+                file_name, _ = os.path.splitext(file_name)
+                with open(os.path.join(DR_PATH, file_name + '.txt'), mode='a', encoding='utf-8') as f:
+                    f.write(f'{predicted_class} {score} {left} {top} {right} {bottom}\n')
+
+                logger.info(label)
+
                 label = label.encode('utf-8')
 
                 if top - label_size[1] >= 0:
+
                     text_origin = np.array([left, top - label_size[1]])
+
                 else:
+
                     text_origin = np.array([left, top + 1])
 
                 for i in range(thickness):
                     draw.rectangle(
+
                         [left + i, top + i, right - i, bottom - i],
+
                         outline=self.colors[c])
+
                 draw.rectangle(
+
                     [tuple(text_origin), tuple(text_origin + label_size)],
+
                     fill=self.colors[c])
+
                 draw.text(text_origin, str(label, 'UTF-8'), fill=(0, 0, 0), font=font)
+
                 del draw
+
             end_time = time.time()
+
+            mean_time.append(end_time - start_time)
+
             logger.info(f'识别时间为{end_time - start_time}s')
+
+            logger.info(f'平均识别时间为{np.mean(mean_time)}s')
+
             logger.info(f'总体置信度为{round(self.recognition_probability(recognition_rate_list), 2) * 100}%')
+
             return image
 
         elif MODE == 'SSD':
