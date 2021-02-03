@@ -5436,8 +5436,7 @@ class YOLO_anchors(object):
         # 特征层1对应的anchor是678
         # 特征层2对应的anchor是345
         # 特征层3对应的anchor是012
-        anchor_mask = [[3, 4, 5], [1, 2, 3]]
-
+        anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]] if num_layers == 3 else [[3, 4, 5], [1, 2, 3]]
         input_shape = K.shape(yolo_outputs[0])[1:3] * 32
         boxes = []
         box_scores = []
