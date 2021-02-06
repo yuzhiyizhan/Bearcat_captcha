@@ -12864,4 +12864,4 @@ class New_Work(object):
 
 
 if __name__ == '__main__':
-    New_Work(work_path='works', project_name='simple_voc').main()
+    New_Work(work_path='works', project_name='simple').main()
