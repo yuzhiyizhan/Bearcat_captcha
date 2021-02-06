@@ -2408,6 +2408,14 @@ class Predict_Image(object):
                                                                            num_classes, self.input_image_shape,
                                                                            score_threshold=self.score,
                                                                            iou_threshold=self.iou)
+        else:
+            if PRUNING:
+                self.model = tf.lite.Interpreter(model_path=self.model_path)
+                self.model.allocate_tensors()
+            else:
+                self.model = operator.methodcaller(MODEL)(Models)
+                self.model.load_weights(self.model_path)
+            logger.debug('加载模型到内存')
 
     def preprocess_input(self, image):
         image /= 255
@@ -11351,6 +11359,18 @@ class Get_Model(object):
                 in_channels = out_channels
         return x
 
+    @staticmethod
+    def Darknet(inputs, **kwargs):
+        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(inputs)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(32, (3, 3), strides=(2, 2))(x)
+        x = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(x)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(64, (3, 3), strides=(2, 2))(x)
+        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=64)
+        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=128)
+        x, _ = Yolo_tiny_model.resblock_body(x, num_filters=256)
+        x = Yolo_model.DarknetConv2D_BN_Leaky(512, (3, 3))(x)
+        return x
+
 
 class Models(object):
     @staticmethod
@@ -11378,7 +11398,7 @@ class Models(object):
                                                        'ignore_thresh': 0.5,
                                                        'label_smoothing': LABEL_SMOOTHING}})(loss_input)
         model = tf.keras.Model([model_body.input, *y_true], model_loss)
-        model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-14, rectify=False),
+        model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-8, rectify=False, weight_decay=1e-4),
                       loss={{'yolo_loss': lambda y_true, y_pred: y_pred}})
         return model
 
@@ -11408,7 +11428,7 @@ class Models(object):
                                                        'ignore_thresh': 0.5,
                                                        'label_smoothing': LABEL_SMOOTHING}})(loss_input)
         model = tf.keras.Model([model_body.input, *y_true], model_loss)
-        model.compile(optimizer=tf.keras.optimizers.Adam(LR),
+        model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-8, rectify=False, weight_decay=1e-4),
                       loss={{'yolo_loss': lambda y_true, y_pred: y_pred}})
         return model
 
@@ -11480,7 +11500,7 @@ class Models(object):
         else:
             logger.error('没有预训练权重')
         model.compile(loss={{'regression': Efficientdet_Loss.smooth_l1(), 'classification': Efficientdet_Loss.focal()}},
-                      optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-14, rectify=False))
+                      optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-8, rectify=False, weight_decay=1e-4))
         return model
 
     @staticmethod
@@ -11714,7 +11734,7 @@ class Models(object):
             logger.success('有预训练权重')
         else:
             logger.error('没有预训练权重')
-        model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-14, rectify=False),
+        model.compile(optimizer=AdaBeliefOptimizer(learning_rate=LR, epsilon=1e-8, rectify=False, weight_decay=1e-4),
                       loss=SSD_Multibox_Loss(Settings.settings(), neg_pos_ratio=3.0).compute_loss)
         return model
 
@@ -11962,7 +11982,7 @@ class Models(object):
 
 if __name__ == '__main__':
     with tf.device('/cpu:0'):
-        model = Models.captcha_model_yolo_tiny()
+        model = Models.captcha_model()
         model.summary()
         # for i, n in enumerate(model.layers):
         #     logger.debug(f'{{i}} {{n.name}}')
@@ -11977,6 +11997,7 @@ def split_dataset(work_path, project_name):
 from {work_path}.{project_name}.settings import TRAIN_PATH
 from {work_path}.{project_name}.utils import Image_Processing
 
+random.seed(0)
 train_image = Image_Processing.extraction_image(TRAIN_PATH)
 random.shuffle(train_image)
 Image_Processing.split_dataset(train_image)
@@ -11996,6 +12017,7 @@ from {work_path}.{project_name}.utils import Image_Processing
 from {work_path}.{project_name}.utils import WriteTFRecord
 from concurrent.futures import ThreadPoolExecutor
 
+random.seed(0)
 if DATA_ENHANCEMENT:
     image_path = Image_Processing.extraction_image(TRAIN_PATH)
     number = len(image_path)
@@ -12842,4 +12864,4 @@ class New_Work(object):
 
 
 if __name__ == '__main__':
-    New_Work(work_path='works', project_name='simple').main()
+    New_Work(work_path='works', project_name='simple_voc').main()
