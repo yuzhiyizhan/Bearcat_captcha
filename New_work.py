@@ -11863,6 +11863,9 @@ class Models(object):
 
 ## small(使用CPU训练,最好还是用GPU)
 
+# Darknet
+# x = Get_Model.Darknet(inputs)
+
 # MobileNetV2
 # x = Get_Model.MobileNetV2(inputs)
 # MobileNetV3Large
