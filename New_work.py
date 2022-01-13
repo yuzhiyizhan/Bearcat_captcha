@@ -11897,6 +11897,9 @@ class Models(object):
 
 ## tf.keras(加载imagenet权重，冻结部分层的权重可以加速训练并获得不错的效果)
 ## tf2.3版本可用的模型
+# 由于x是搭好的模型,做迁移时要把最后一层的输出做平均池化
+# 代码为:
+# x = tf.keras.layers.GlobalAveragePooling2D()(x.output)
 # x = tf.keras.applications.MobileNet(input_tensor=inputs, include_top=False, weights='imagenet')
 # x = tf.keras.applications.MobileNetV2(input_tensor=inputs, include_top=False, weights='imagenet')
 # x = tf.keras.applications.NASNetLarge(input_tensor=inputs, include_top=False, weights='imagenet')
@@ -11923,6 +11926,9 @@ class Models(object):
 # x = tf.keras.applications.InceptionV3(input_tensor=inputs, include_top=False, weights='imagenet')
 # x = Get_Model.MobileNetV3Small(input_tensor=inputs, weights='imagenet')
 # x = Get_Model.MobileNetV3Large(input_tensor=inputs, weights='imagenet')
+# 冻结代码为:
+# model = tf.keras.Model(inputs=inputs, outputs=outputs)
+# for i in range(int(len(list(model.layers)) * 0.9)): model.layers[i].trainable = False
 
 ### 目标检测
 ## SSD
