@@ -12,7 +12,7 @@ einops==0.3.0
 adabelief_tf==0.1.0
 django_recaptcha==2.0.6
 Pillow==8.0.1
-tensorflow==2.3.0
+tensorflow==2.6.4
 pydot-ng
 graphviz
 captcha
